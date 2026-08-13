@@ -1,6 +1,8 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());const http = require('http');
+puppeteer.use(StealthPlugin());
+
+const http = require('http');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TELEGRAM_VIPI_CHAT_ID = "-1003909320436";
@@ -675,7 +677,7 @@ const isStrictlySequential = (dataList) => {
 };
 
 async function startBot() {
-    console.log("[BOT START] Launching headless browser...");
+    console.log("[BOT START] Launching Stealth Headless Browser...");
     
     const browser = await puppeteer.launch({
         headless: "new",
@@ -686,17 +688,25 @@ async function startBot() {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--window-size=1920,1080'
         ]
     });
 
     const page = await browser.newPage();
     
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-    await page.setViewport({ width: 1366, height: 768 });
+    await page.setViewport({ width: 1920, height: 1080 });
 
     console.log(`[BOT START] Navigating to ${TARGET_URL}...`);
-    await page.goto(TARGET_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.goto(TARGET_URL, { waitUntil: 'networkidle2', timeout: 90000 });
+
+    try {
+        await page.waitForSelector('.lf-row', { timeout: 30000 });
+        console.log("[BOT START] Game table successfully detected!");
+    } catch (e) {
+        console.log("[BOT START] Waiting for game table selector...");
+    }
 
     setInterval(async () => {
         try {
@@ -777,7 +787,6 @@ async function startBot() {
 
 startBot();
 
-// Dummy HTTP Server to satisfy Render Free Web Service Port Binding requirement
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
