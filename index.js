@@ -369,10 +369,6 @@ const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) 
         baseConf = Math.min(48, Math.max(5, baseConf));
     }
 
-    if (baseConf <= 50) {
-        return "wait ⚪";
-    }
-
     if (val < 2.0) {
         return `${val} 🔴 (${baseConf}%)${note}`;
     } else {
@@ -474,23 +470,12 @@ const processAndSendPrediction = async (results, gameId) => {
     const nextPrediction2 = predictFormula2(results);
     const nextCustomPrediction = checkCustomException(results);
 
-    const conf1 = (nextPrediction1 && nextPrediction1.status === 'predict') ? calculateConfidence(nextPrediction1.predictedValue, results) : 0;
-    const conf2 = (nextPrediction2 && nextPrediction2.status === 'predict') ? calculateConfidence(nextPrediction2.predictedValue, results) : 0;
-
-    if (nextPrediction1.status === 'predict') {
-        if (conf1 <= 50) {
-            nextPrediction1.status = 'wait';
-        } else {
-            stats1.totalPredictions++;
-        }
+    if (nextPrediction1 && nextPrediction1.status === 'predict') {
+        stats1.totalPredictions++;
     }
 
-    if (nextPrediction2.status === 'predict') {
-        if (conf2 <= 50) {
-            nextPrediction2.status = 'wait';
-        } else {
-            stats2.totalPredictions++;
-        }
+    if (nextPrediction2 && nextPrediction2.status === 'predict') {
+        stats2.totalPredictions++;
     }
 
     const f1Active = nextPrediction1 && nextPrediction1.status === 'predict';
@@ -519,7 +504,9 @@ const processAndSendPrediction = async (results, gameId) => {
                 f2WinnerInConflict = true;
                 f1LoserInConflict = true;
             } else {
-                if (conf1 >= conf2) {
+                const c1 = calculateConfidence(nextPrediction1.predictedValue, results);
+                const c2 = calculateConfidence(nextPrediction2.predictedValue, results);
+                if (c1 >= c2) {
                     f1WinnerInConflict = true;
                     f2LoserInConflict = true;
                 } else {
@@ -576,21 +563,15 @@ const processAndSendPrediction = async (results, gameId) => {
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // 4. VIP IV Condition: Both X1 and X2 are Agreed AND Confidence > 30%
-    const rawNext1 = predictFormula1(results);
-    const rawNext2 = predictFormula2(results);
+    // 4. VIP IV Condition: Both X1 and X2 are Active & Agreed & Both Conf > 30%
+    if (f1Active && f2Active) {
+        const f1Over2 = nextPrediction1.predictedValue >= 2.0;
+        const f2Over2 = nextPrediction2.predictedValue >= 2.0;
 
-    const rawConf1 = (rawNext1 && rawNext1.status === 'predict') ? calculateConfidence(rawNext1.predictedValue, results) : 0;
-    const rawConf2 = (rawNext2 && rawNext2.status === 'predict') ? calculateConfidence(rawNext2.predictedValue, results) : 0;
+        const conf1 = calculateConfidence(nextPrediction1.predictedValue, results);
+        const conf2 = calculateConfidence(nextPrediction2.predictedValue, results);
 
-    const isRaw1Active = rawNext1 && rawNext1.status === 'predict';
-    const isRaw2Active = rawNext2 && rawNext2.status === 'predict';
-
-    if (isRaw1Active && isRaw2Active) {
-        const raw1Over2 = rawNext1.predictedValue >= 2.0;
-        const raw2Over2 = rawNext2.predictedValue >= 2.0;
-
-        if (raw1Over2 === raw2Over2 && rawConf1 > 30 && rawConf2 > 30) {
+        if (f1Over2 === f2Over2 && conf1 > 30 && conf2 > 30) {
             let vip4Message = `<b>👑 VIP IV 👑</b>\n`;
             vip4Message += `<b>Game ID:</b> #${gameId}\n`;
             vip4Message += `${last4Formatted}\n`;
@@ -599,8 +580,8 @@ const processAndSendPrediction = async (results, gameId) => {
             vip4Message += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
             vip4Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
 
-            vip4Message += `<b>Next X1:</b>  ${formatNextLine(rawNext1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-            vip4Message += `<b>Next X2:</b>  ${formatNextLine(rawNext2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
+            vip4Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
+            vip4Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
             vip4Message += `<b>Next Custom:</b>  ${formatCustomLine(nextCustomPrediction)}`;
 
             telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip4Message));
