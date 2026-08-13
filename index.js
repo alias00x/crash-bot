@@ -1,4 +1,5 @@
 const puppeteer = require('puppeteer');
+const http = require('http');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TELEGRAM_VIPI_CHAT_ID = "-1003909320436";
@@ -774,3 +775,12 @@ async function startBot() {
 }
 
 startBot();
+
+// Dummy HTTP Server to satisfy Render Free Web Service Port Binding requirement
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is running 24/7\n');
+}).listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+});
