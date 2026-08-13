@@ -491,7 +491,7 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     str += `<b>- 2:</b> ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
     str += `<b>+2:</b> ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
     str += `<b>+10:</b> ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})\n`;
-    str += `<b>+100:</b> ${stats.over100.count} (${o100Neg} / zero(${o100Zero}) / ${o10Pos10} / ${o100Pos110})\n`;
+    str += `<b>+100:</b> ${stats.over100.count} (${o100Neg} / zero(${o100Zero}) / ${o100Pos10} / ${o100Pos110})\n`;
 
     return str;
 };
