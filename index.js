@@ -436,12 +436,12 @@ const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) 
     } else if (val >= 10.0 && val < 100.0) {
         const c10 = Math.min(92, Math.max(10, baseConf));
         const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
-        return `${displayVal} 🟢 (${c2}%)    10🟡 (${c10}%)${note}`;
+        return `${displayVal} 🟢 (${c2}%)   10🟡 (${c10}%)${note}`;
     } else {
         const c100 = Math.min(90, Math.max(5, baseConf));
         const c10 = Math.min(98, Math.round(c100 + (100 - c100) * 0.65 * factor));
         const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
-        return `${displayVal} 🟢🟢 (${c2}%)    10🟡 (${c10}%)   Classic_100🟡 (${c100}%)${note}`;
+        return `${displayVal} 🟢🟢 (${c2}%)   10🟡 (${c10}%)  100🟡 (${c100}%)${note}`;
     }
 };
 
@@ -455,7 +455,9 @@ const formatCustomLine = (customPred) => {
 const formatSystemBlockVip1 = (sysName, stats, lastPts, totalScore) => {
     const ptsSign = lastPts >= 0 ? `+${lastPts}` : `${lastPts}`;
     const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
-    return `🩵 <b>${sysName}: Total: </b>${stats.totalPredictions}: (${ptsSign}) ${totalSign}`;
+    const negTot = stats.totalNegPoints;
+    const posTot = stats.totalPosPoints >= 0 ? `+${stats.totalPosPoints}` : `${stats.totalPosPoints}`;
+    return `🩵 <b>${sysName}: Total: </b>${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}`;
 };
 
 const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
@@ -622,8 +624,9 @@ const processAndSendPrediction = async (results, gameId) => {
 
     // 1. VIP I Periodic 50-game Full Report
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
-        let periodicReportMessage = `<b>👑 VIP II Report 👑</b>\n`;
+        let periodicReportMessage = `<b>👑👑 VIP II </b>\n`;
         periodicReportMessage += `<b>Game ID:</b> #${gameId}\n`;
+        periodicReportMessage += `${last4Formatted}\n`;
         periodicReportMessage += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
         periodicReportMessage += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
@@ -632,9 +635,9 @@ const processAndSendPrediction = async (results, gameId) => {
         telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage));
     }
 
-    // 2. Standard VIP I Message (Add [good ✨] if signal is agreed and conf > 30%)
-    let vip1Title = isGoodSignal ? `<b>👑 VIP I 👑  [good ✨]</b>\n` : `<b>👑 VIP I 👑</b>\n`;
-    let vip1Message = vip1Title;
+    // 2. Standard VIP I Message
+    let vip1Status = isGoodSignal ? "Good" : "Normal";
+    let vip1Message = `<b>👑 VIP I </b>\n`;
     vip1Message += `<b>Game ID:</b> #${gameId}\n`;
     vip1Message += `${last4Formatted}\n`;
     vip1Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
@@ -643,12 +646,13 @@ const processAndSendPrediction = async (results, gameId) => {
     vip1Message += formatSystemBlockVip1("X2", stats2, pts2, totalScore2) + "\n\n";
 
     vip1Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-    vip1Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}`;
+    vip1Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
+    vip1Message += `<b>Prediction status:</b>  ${vip1Status}`;
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message));
 
     // 3. Standard VIP II Message
-    let vip2Message = `<b>👑 VIP II 👑</b>\n`;
+    let vip2Message = `<b>👑👑 VIP II </b>\n`;
     vip2Message += `<b>Game ID:</b> #${gameId}\n`;
     vip2Message += `${last4Formatted}\n`;
     vip2Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
@@ -657,14 +661,13 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
 
     vip2Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-    vip2Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
-    vip2Message += `<b>Next Custom:</b>  ${formatCustomLine(nextCustomPrediction)}`;
+    vip2Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}`;
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // 4. VIP IV Condition: Both X1 and X2 are Active & Agreed & Both Conf > 30%
+    // 4. VIP 4 Condition: Both X1 and X2 are Active & Agreed & Both Conf > 30%
     if (isGoodSignal) {
-        let vip4Message = `<b>👑 VIP IV 👑</b>\n`;
+        let vip4Message = `<b>👑👑👑👑 VIP 4 </b>\n`;
         vip4Message += `<b>Game ID:</b> #${gameId}\n`;
         vip4Message += `${last4Formatted}\n`;
         vip4Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
@@ -673,8 +676,7 @@ const processAndSendPrediction = async (results, gameId) => {
         vip4Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
 
         vip4Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-        vip4Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
-        vip4Message += `<b>Next Custom:</b>  ${formatCustomLine(nextCustomPrediction)}`;
+        vip4Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}`;
 
         telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip4Message));
     }
