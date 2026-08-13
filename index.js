@@ -26,8 +26,6 @@ let pendingPrediction2 = null;
 const createStats = () => ({
     under2: { count: 0, negPoints: 0, posPoints: 0 },
     over2: { count: 0, negPoints: 0, posPoints: 0 },
-    over10: { count: 0, negPoints: 0, zeroCount: 0, posPoints: 0 },
-    over100: { count: 0, negPoints: 0, zeroCount: 0, pos10Points: 0, pos110Points: 0 },
     totalNegPoints: 0,
     totalPosPoints: 0,
     totalPredictions: 0,
@@ -53,22 +51,11 @@ const safeExp = (val) => {
 
 const calculatePoints = (pred, actual) => {
     if (pred === null || isNaN(pred) || actual === null || isNaN(actual)) return 0;
-
-    if (pred < 2) {
-        return actual < 2 ? 1 : -1;
-    } else if (pred >= 2 && pred < 10) {
-        return actual < 2 ? -1 : 1;
-    } else if (pred >= 10 && pred < 100) {
-        if (actual < 2) return -2;
-        if (actual >= 2 && actual < 10) return 0;
-        return 10;
-    } else if (pred >= 100) {
-        if (actual < 2) return -4;
-        if (actual >= 2 && actual < 10) return 0;
-        if (actual >= 10 && actual < 100) return 10;
-        return 110;
+    if (pred < 2.0) {
+        return actual < 2.0 ? 1 : -1;
+    } else {
+        return actual >= 2.0 ? 1 : -1;
     }
-    return 0;
 };
 
 const calculateConfidence = (predictedVal, arr) => {
@@ -80,54 +67,25 @@ const calculateConfidence = (predictedVal, arr) => {
     const [n7, n6, n5, n4, n3, n2, n1] = last7;
 
     const k3 = safeLog(n3);
-    const k2 = safeLog(n2);
     const k1 = safeLog(n1);
+    const kConf = (k3 + k1) / 2.0;
+    let nConf = safeExp(kConf);
+    if (nConf < 0) nConf = Math.abs(nConf) + 1.0;
 
-    if (Math.abs(k2) < 1e-9) {
-        return 50;
-    }
+    const predOver2 = predictedVal >= 2.0;
+    const confOver2 = nConf >= 2.0;
 
-    const kConf = (k3 * k1) / k2;
-    let rawNConf = safeExp(kConf);
-    let nConf = rawNConf < 0 ? Math.abs(rawNConf) + 1.0 : rawNConf;
-
-    const getRange = (v) => {
-        if (v < 1.50) return 1;
-        if (v < 2.00) return 2;
-        if (v < 5.00) return 3;
-        if (v < 10.00) return 4;
-        return 5;
-    };
-
-    const rP = getRange(predictedVal);
-    const rC = getRange(nConf);
-
-    const ratio = Math.min(predictedVal, nConf) / Math.max(predictedVal, nConf);
+    const minV = Math.min(predictedVal, nConf);
+    const maxV = Math.max(predictedVal, nConf);
+    const ratio = maxV > 0 ? minV / maxV : 1.0;
 
     let pct = 50;
 
-    if (rP === 1 && rC === 1) pct = 80 + 18 * ratio;
-    else if (rP === 1 && rC === 2) pct = 60 + 35 * ratio;
-    else if (rP === 1 && rC >= 3) pct = Math.min(29, 10 + 19 * ratio);
-
-    else if (rP === 2 && rC === 1) pct = 70 + 25 * ratio;
-    else if (rP === 2 && rC === 2) pct = 80 + 18 * ratio;
-    else if (rP === 2 && rC >= 3) pct = Math.min(39, 15 + 24 * ratio);
-
-    else if (rP === 3 && rC === 1) pct = Math.min(29, 10 + 19 * ratio);
-    else if (rP === 3 && rC === 2) pct = Math.min(39, 15 + 24 * ratio);
-    else if (rP === 3 && (rC === 3 || rC === 4)) pct = 50 + 45 * ratio;
-    else if (rP === 3 && rC === 5) pct = 50 + 45 * ratio;
-
-    else if (rP === 4 && rC === 1) pct = Math.min(19, 5 + 14 * ratio);
-    else if (rP === 4 && rC === 2) pct = Math.min(29, 10 + 19 * ratio);
-    else if (rP === 4 && (rC === 3 || rC === 4)) pct = 50 + 45 * ratio;
-    else if (rP === 4 && rC === 5) pct = 80 + 18 * ratio;
-
-    else if (rP === 5 && rC === 1) pct = Math.min(19, 5 + 14 * ratio);
-    else if (rP === 5 && rC === 2) pct = Math.min(29, 10 + 19 * ratio);
-    else if (rP === 5 && (rC === 3 || rC === 4)) pct = 50 + 45 * ratio;
-    else if (rP === 5 && rC === 5) pct = 70 + 28 * ratio;
+    if (predOver2 === confOver2) {
+        pct = 65 + 30 * ratio;
+    } else {
+        pct = 45 * ratio;
+    }
 
     return Math.min(98, Math.max(5, Math.round(pct)));
 };
@@ -137,10 +95,8 @@ const getNConfValue = (arr) => {
     const last7 = arr.slice(-7);
     const [n7, n6, n5, n4, n3, n2, n1] = last7;
     const k3 = safeLog(n3);
-    const k2 = safeLog(n2);
     const k1 = safeLog(n1);
-    if (Math.abs(k2) < 1e-9) return 1.0;
-    const kConf = (k3 * k1) / k2;
+    const kConf = (k3 + k1) / 2.0;
     let rawNConf = safeExp(kConf);
     return rawNConf < 0 ? Math.abs(rawNConf) + 1.0 : rawNConf;
 };
@@ -156,21 +112,10 @@ const updateStats = (stats, predVal, actualVal, pts) => {
         stats.under2.count++;
         if (pts > 0) stats.under2.posPoints += pts;
         if (pts < 0) stats.under2.negPoints += pts;
-    } else if (predVal >= 2.0 && predVal < 10.0) {
+    } else {
         stats.over2.count++;
         if (pts > 0) stats.over2.posPoints += pts;
         if (pts < 0) stats.over2.negPoints += pts;
-    } else if (predVal >= 10.0 && predVal < 100.0) {
-        stats.over10.count++;
-        if (pts === 0) stats.over10.zeroCount++;
-        if (pts > 0) stats.over10.posPoints += pts;
-        if (pts < 0) stats.over10.negPoints += pts;
-    } else if (predVal >= 100.0) {
-        stats.over100.count++;
-        if (pts === 0) stats.over100.zeroCount++;
-        if (pts === 10) stats.over100.pos10Points += 10;
-        if (pts === 110) stats.over100.pos110Points += 110;
-        if (pts < 0) stats.over100.negPoints += pts;
     }
 
     stats.history20.push(pts);
@@ -200,33 +145,33 @@ const checkCustomException = (arr) => {
     const len = arr.length;
 
     if (len >= 3 && isY(arr[len - 3]) && isG(arr[len - 2]) && isG(arr[len - 1])) {
-        if (isSimilar(arr[len - 2], arr[len - 1])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YGG)' };
+        if (isSimilar(arr[len - 2], arr[len - 1])) return { status: 'predict', predictedValue: 2.50, ruleName: 'Symmetry (YGG)' };
     }
     if (len >= 4 && isY(arr[len - 4]) && isG(arr[len - 3]) && isR(arr[len - 2]) && isG(arr[len - 1])) {
-        if (isSimilar(arr[len - 3], arr[len - 1])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YGRG)' };
+        if (isSimilar(arr[len - 3], arr[len - 1])) return { status: 'predict', predictedValue: 2.50, ruleName: 'Symmetry (YGRG)' };
     }
     if (len >= 3 && isY(arr[len - 3]) && isR(arr[len - 2]) && isR(arr[len - 1])) {
-        if (isSimilar(arr[len - 2], arr[len - 1])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YRR)' };
+        if (isSimilar(arr[len - 2], arr[len - 1])) return { status: 'predict', predictedValue: 2.50, ruleName: 'Symmetry (YRR)' };
     }
     if (len >= 4 && isY(arr[len - 4]) && isR(arr[len - 3]) && isG(arr[len - 2]) && isR(arr[len - 1])) {
-        if (isSimilar(arr[len - 3], arr[len - 1])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YRGR)' };
+        if (isSimilar(arr[len - 3], arr[len - 1])) return { status: 'predict', predictedValue: 2.50, ruleName: 'Symmetry (YRGR)' };
     }
     if (len >= 5 && isY(arr[len - 5]) && isR(arr[len - 4]) && isG(arr[len - 3]) && isG(arr[len - 2]) && isR(arr[len - 1])) {
-        if (isSimilar(arr[len - 4], arr[len - 1]) && isSimilar(arr[len - 3], arr[len - 2])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YRGGR)' };
+        if (isSimilar(arr[len - 4], arr[len - 1]) && isSimilar(arr[len - 3], arr[len - 2])) return { status: 'predict', predictedValue: 2.50, ruleName: 'Symmetry (YRGGR)' };
     }
     if (len >= 5 && isY(arr[len - 5]) && isG(arr[len - 4]) && isR(arr[len - 3]) && isR(arr[len - 2]) && isG(arr[len - 1])) {
-        if (isSimilar(arr[len - 4], arr[len - 1]) && isSimilar(arr[len - 3], arr[len - 2])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YGRRG)' };
+        if (isSimilar(arr[len - 4], arr[len - 1]) && isSimilar(arr[len - 3], arr[len - 2])) return { status: 'predict', predictedValue: 2.50, ruleName: 'Symmetry (YGRRG)' };
     }
 
     if (len >= 4 && isLowR(arr[len - 4]) && isG(arr[len - 3]) && arr[len - 3] < 3.0 && isG(arr[len - 2]) && arr[len - 2] < 3.0 && isG(arr[len - 1])) {
-        return { status: 'predict', predictedValue: 10.0, ruleName: 'Step from Zero (RGGG)' };
+        return { status: 'predict', predictedValue: 2.50, ruleName: 'Step from Zero (RGGG)' };
     }
     if (len >= 4 && isLowR(arr[len - 4]) && isR(arr[len - 3]) && isG(arr[len - 2]) && arr[len - 2] < 3.0 && isG(arr[len - 1])) {
-        return { status: 'predict', predictedValue: 10.0, ruleName: 'Step from Zero (RRGG)' };
+        return { status: 'predict', predictedValue: 2.50, ruleName: 'Step from Zero (RRGG)' };
     }
 
     if (len >= 4 && isG(arr[len - 4]) && isG(arr[len - 3]) && isLowR(arr[len - 2]) && isG(arr[len - 1])) {
-        return { status: 'predict', predictedValue: 10.0, ruleName: 'Trapped Zero (GGRG)' };
+        return { status: 'predict', predictedValue: 2.50, ruleName: 'Trapped Zero (GGRG)' };
     }
 
     if (len >= 6) {
@@ -239,7 +184,7 @@ const checkCustomException = (arr) => {
         const isN2LowRed = isLowR(n2);
 
         if (isN6Green && isN4GreenOrMidRed && isN2LowRed) {
-            return { status: 'predict', predictedValue: 10.0, ruleName: 'Descent Death (n6,n4,n2)' };
+            return { status: 'predict', predictedValue: 2.50, ruleName: 'Descent Death (n6,n4,n2)' };
         }
     }
 
@@ -412,7 +357,6 @@ const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) 
         return "wait ⚪";
     }
     const val = prediction.predictedValue;
-    const displayVal = val >= 1000 ? "+1000" : val;
     let note = prediction.wasNegative ? " (Negative)" : "";
 
     let baseConf = calculateConfidence(val, arr) || 50;
@@ -423,23 +367,14 @@ const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) 
         baseConf = Math.min(48, Math.max(5, baseConf));
     }
 
-    const factor = Math.max(0.2, baseConf / 100);
+    if (baseConf <= 50) {
+        return "wait ⚪";
+    }
 
     if (val < 2.0) {
-        const c0 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 5, baseConf));
-        return `${displayVal} 🔴 (${c0}%)${note}`;
-    } else if (val >= 2.0 && val < 10.0) {
-        const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, baseConf));
-        return `${displayVal} 🟢 (${c2}%)${note}`;
-    } else if (val >= 10.0 && val < 100.0) {
-        const c10 = Math.min(92, Math.max(10, baseConf));
-        const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
-        return `${displayVal} 🟢 (${c2}%)    10🟡 (${c10}%)${note}`;
+        return `${val} 🔴 (${baseConf}%)${note}`;
     } else {
-        const c100 = Math.min(90, Math.max(5, baseConf));
-        const c10 = Math.min(98, Math.round(c100 + (100 - c100) * 0.65 * factor));
-        const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
-        return `${displayVal} 🟢🟢 (${c2}%)    10🟡 (${c10}%)   Classic_100🟡 (${c100}%)${note}`;
+        return `${val} 🟢 (${baseConf}%)${note}`;
     }
 };
 
@@ -447,7 +382,7 @@ const formatCustomLine = (customPred) => {
     if (!customPred || customPred.status === 'wait') {
         return "wait ⚪";
     }
-    return `+10.00 🟡 [${customPred.ruleName}]`;
+    return `+2.50 🟢 [${customPred.ruleName}]`;
 };
 
 const formatSystemBlockVip1 = (sysName, stats, lastPts, totalScore) => {
@@ -469,15 +404,6 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     const o2Neg = stats.over2.negPoints;
     const o2Pos = stats.over2.posPoints >= 0 ? `+${stats.over2.posPoints}` : `${stats.over2.posPoints}`;
 
-    const o10Neg = stats.over10.negPoints;
-    const o10Zero = stats.over10.zeroCount;
-    const o10Pos = stats.over10.posPoints >= 0 ? `+${stats.over10.posPoints}` : `${stats.over10.posPoints}`;
-
-    const o100Neg = stats.over100.negPoints;
-    const o100Zero = stats.over100.zeroCount;
-    const o100Pos10 = stats.over100.pos10Points >= 0 ? `+${stats.over100.pos10Points}` : `${stats.over100.pos10Points}`;
-    const o100Pos110 = stats.over100.pos110Points >= 0 ? `+${stats.over100.pos110Points}` : `${stats.over100.pos110Points}`;
-
     let neg20 = 0;
     let pos20 = 0;
     stats.history20.forEach(p => {
@@ -490,8 +416,6 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     str += `<b>Last 20 </b>(${neg20} / ${pos20Str})\n`;
     str += `<b>- 2:</b> ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
     str += `<b>+2:</b> ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
-    str += `<b>+10:</b> ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})\n`;
-    str += `<b>+100:</b> ${stats.over100.count} (${o100Neg} / zero(${o100Zero}) / ${o100Pos10} / ${o100Pos110})\n`;
 
     return str;
 };
@@ -509,15 +433,6 @@ const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
     const o2Neg = stats.over2.negPoints;
     const o2Pos = stats.over2.posPoints >= 0 ? `+${stats.over2.posPoints}` : `${stats.over2.posPoints}`;
 
-    const o10Neg = stats.over10.negPoints;
-    const o10Zero = stats.over10.zeroCount;
-    const o10Pos = stats.over10.posPoints >= 0 ? `+${stats.over10.posPoints}` : `${stats.over10.posPoints}`;
-
-    const o100Neg = stats.over100.negPoints;
-    const o100Zero = stats.over100.zeroCount;
-    const o100Pos10 = stats.over100.pos10Points >= 0 ? `+${stats.over100.pos10Points}` : `${stats.over100.pos10Points}`;
-    const o100Pos110 = stats.over100.pos110Points >= 0 ? `+${stats.over100.pos110Points}` : `${stats.over100.pos110Points}`;
-
     let neg20 = 0;
     let pos20 = 0;
     stats.history20.forEach(p => {
@@ -529,9 +444,7 @@ const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
     let str = `🩵 ${sysName}: Total: ${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}\n`;
     str += `Last 20 (${neg20} / ${pos20Str})\n`;
     str += `- 2: ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
-    str += `+2: ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
-    str += `+10: ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})\n`;
-    str += `+100: ${stats.over100.count} (${o100Neg} / zero(${o100Zero}) / ${o100Pos10} / ${o100Pos110})`;
+    str += `+2: ${stats.over2.count} (${o2Neg} / ${o2Pos})`;
 
     return str;
 };
@@ -560,10 +473,21 @@ const processAndSendPrediction = async (results, gameId) => {
     const nextCustomPrediction = checkCustomException(results);
 
     if (nextPrediction1.status === 'predict') {
-        stats1.totalPredictions++;
+        const conf1 = calculateConfidence(nextPrediction1.predictedValue, results);
+        if (conf1 <= 50) {
+            nextPrediction1.status = 'wait';
+        } else {
+            stats1.totalPredictions++;
+        }
     }
+
     if (nextPrediction2.status === 'predict') {
-        stats2.totalPredictions++;
+        const conf2 = calculateConfidence(nextPrediction2.predictedValue, results);
+        if (conf2 <= 50) {
+            nextPrediction2.status = 'wait';
+        } else {
+            stats2.totalPredictions++;
+        }
     }
 
     const f1Active = nextPrediction1 && nextPrediction1.status === 'predict';
