@@ -7,8 +7,7 @@ const http = require('http');
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TELEGRAM_VIPI_CHAT_ID = "-1003909320436";
 const TELEGRAM_VIP2_CHAT_ID = "-1003912437402";
-// const TELEGRAM_VIP4_CHAT_ID = "-1003926861194";
-
+const TELEGRAM_VIP4_CHAT_ID = "-1003926861194";
 const ENABLE_TELEGRAM = true;
 
 const TARGET_URL = "https://bc.game/game/crash";
@@ -344,8 +343,8 @@ const sendVipWarningAlert = async (warningMsg) => {
 
     await Promise.all([
         sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, warningHtml),
-        sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, warningHtml)
-        // sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, warningHtml)
+        sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, warningHtml),
+        sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, warningHtml)
     ]);
 };
 
@@ -475,8 +474,10 @@ const processAndSendPrediction = async (results, gameId) => {
     const nextPrediction2 = predictFormula2(results);
     const nextCustomPrediction = checkCustomException(results);
 
+    const conf1 = (nextPrediction1 && nextPrediction1.status === 'predict') ? calculateConfidence(nextPrediction1.predictedValue, results) : 0;
+    const conf2 = (nextPrediction2 && nextPrediction2.status === 'predict') ? calculateConfidence(nextPrediction2.predictedValue, results) : 0;
+
     if (nextPrediction1.status === 'predict') {
-        const conf1 = calculateConfidence(nextPrediction1.predictedValue, results);
         if (conf1 <= 50) {
             nextPrediction1.status = 'wait';
         } else {
@@ -485,7 +486,6 @@ const processAndSendPrediction = async (results, gameId) => {
     }
 
     if (nextPrediction2.status === 'predict') {
-        const conf2 = calculateConfidence(nextPrediction2.predictedValue, results);
         if (conf2 <= 50) {
             nextPrediction2.status = 'wait';
         } else {
@@ -519,9 +519,7 @@ const processAndSendPrediction = async (results, gameId) => {
                 f2WinnerInConflict = true;
                 f1LoserInConflict = true;
             } else {
-                const c1 = calculateConfidence(nextPrediction1.predictedValue, results);
-                const c2 = calculateConfidence(nextPrediction2.predictedValue, results);
-                if (c1 >= c2) {
+                if (conf1 >= conf2) {
                     f1WinnerInConflict = true;
                     f2LoserInConflict = true;
                 } else {
@@ -535,6 +533,9 @@ const processAndSendPrediction = async (results, gameId) => {
     const last4 = results.slice(-4);
     const last4Formatted = last4.map(num => formatColoredNum(num)).join('  ');
 
+    const telegramPromises = [];
+
+    // 1. VIP I Periodic 50-game Full Report
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
         let periodicReportMessage = `<b>👑 VIP II Report 👑</b>\n`;
         periodicReportMessage += `<b>Game ID:</b> #${gameId}\n`;
@@ -543,9 +544,10 @@ const processAndSendPrediction = async (results, gameId) => {
         periodicReportMessage += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
         periodicReportMessage += formatSystemBlockVip2("X2", stats2, pts2, totalScore2);
 
-        await sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage);
+        telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage));
     }
 
+    // 2. Standard VIP I Message
     let vip1Message = `<b>👑 VIP I 👑</b>\n`;
     vip1Message += `<b>Game ID:</b> #${gameId}\n`;
     vip1Message += `${last4Formatted}\n`;
@@ -557,6 +559,9 @@ const processAndSendPrediction = async (results, gameId) => {
     vip1Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
     vip1Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}`;
 
+    telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message));
+
+    // 3. Standard VIP II Message
     let vip2Message = `<b>👑 VIP II 👑</b>\n`;
     vip2Message += `<b>Game ID:</b> #${gameId}\n`;
     vip2Message += `${last4Formatted}\n`;
@@ -568,6 +573,39 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
     vip2Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
     vip2Message += `<b>Next Custom:</b>  ${formatCustomLine(nextCustomPrediction)}`;
+
+    telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
+
+    // 4. VIP IV Condition: Both X1 and X2 are Agreed AND Confidence > 30%
+    const rawNext1 = predictFormula1(results);
+    const rawNext2 = predictFormula2(results);
+
+    const rawConf1 = (rawNext1 && rawNext1.status === 'predict') ? calculateConfidence(rawNext1.predictedValue, results) : 0;
+    const rawConf2 = (rawNext2 && rawNext2.status === 'predict') ? calculateConfidence(rawNext2.predictedValue, results) : 0;
+
+    const isRaw1Active = rawNext1 && rawNext1.status === 'predict';
+    const isRaw2Active = rawNext2 && rawNext2.status === 'predict';
+
+    if (isRaw1Active && isRaw2Active) {
+        const raw1Over2 = rawNext1.predictedValue >= 2.0;
+        const raw2Over2 = rawNext2.predictedValue >= 2.0;
+
+        if (raw1Over2 === raw2Over2 && rawConf1 > 30 && rawConf2 > 30) {
+            let vip4Message = `<b>👑 VIP IV 👑</b>\n`;
+            vip4Message += `<b>Game ID:</b> #${gameId}\n`;
+            vip4Message += `${last4Formatted}\n`;
+            vip4Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
+
+            vip4Message += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
+            vip4Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
+
+            vip4Message += `<b>Next X1:</b>  ${formatNextLine(rawNext1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
+            vip4Message += `<b>Next X2:</b>  ${formatNextLine(rawNext2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
+            vip4Message += `<b>Next Custom:</b>  ${formatCustomLine(nextCustomPrediction)}`;
+
+            telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip4Message));
+        }
+    }
 
     let consoleReport = `==================================================\n`;
     consoleReport += `👑 VIP II REPORT (CONSOLE) 👑\n`;
@@ -588,11 +626,7 @@ const processAndSendPrediction = async (results, gameId) => {
     pendingPrediction1 = nextPrediction1;
     pendingPrediction2 = nextPrediction2;
 
-    await Promise.all([
-        sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message),
-        sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message)
-        // sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip2Message)
-    ]);
+    await Promise.all(telegramPromises);
 };
 
 const isStrictlySequential = (dataList) => {
