@@ -1,0 +1,12 @@
+{
+  "name": "crash-prediction-bot",
+  "version": "1.0.0",
+  "description": "24/7 VIP Prediction Bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "puppeteer": "^22.6.0"
+  }
+}
