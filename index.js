@@ -7,7 +7,7 @@ const http = require('http');
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TELEGRAM_VIPI_CHAT_ID = "-1003909320436";
 const TELEGRAM_VIP2_CHAT_ID = "-1003912437402";
-const TELEGRAM_VIP4_CHAT_ID = "-1003926861194";
+// const TELEGRAM_VIP4_CHAT_ID = "-1003926861194";
 
 const ENABLE_TELEGRAM = true;
 
@@ -345,7 +345,7 @@ const sendVipWarningAlert = async (warningMsg) => {
     await Promise.all([
         sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, warningHtml),
         sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, warningHtml)
-        sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, warningHtml)
+        // sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, warningHtml)
     ]);
 };
 
@@ -591,7 +591,7 @@ const processAndSendPrediction = async (results, gameId) => {
     await Promise.all([
         sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message),
         sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message)
-        sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip2Message)
+        // sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip2Message)
     ]);
 };
 
