@@ -1,5 +1,6 @@
-const puppeteer = require('puppeteer');
-const http = require('http');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());const http = require('http');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TELEGRAM_VIPI_CHAT_ID = "-1003909320436";
