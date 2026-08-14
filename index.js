@@ -10,6 +10,7 @@ const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TELEGRAM_VIPI_CHAT_ID = "-1003909320436";
 const TELEGRAM_VIP2_CHAT_ID = "-1003912437402";
 const TELEGRAM_VIP4_CHAT_ID = "-1003926861194";
+const TELEGRAM_LOG_CHAT_ID = "-1004340657482";
 const ENABLE_TELEGRAM = true;
 
 const TARGET_URL = "https://bc.game/game/crash";
@@ -507,6 +508,30 @@ const sendTelegramMessage = async (chatId, messageHtml) => {
     }
 };
 
+const sendTelegramDocument = async (chatId, filePath, caption = "") => {
+    if (!chatId || !ENABLE_TELEGRAM || !fs.existsSync(filePath)) return;
+
+    try {
+        const fileBuffer = fs.readFileSync(filePath);
+        const blob = new Blob([fileBuffer], { type: 'text/plain' });
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+        formData.append('document', blob, path.basename(filePath));
+        if (caption) {
+            formData.append('caption', caption);
+            formData.append('parse_mode', 'HTML');
+        }
+
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, {
+            method: 'POST',
+            body: formData
+        });
+        console.log(`[TELEGRAM LOG] Sent ${path.basename(filePath)} successfully to ${chatId}`);
+    } catch (error) {
+        console.error(`[TELEGRAM SEND DOC ERROR -> ${chatId}]`, error);
+    }
+};
+
 const sendVipWarningAlert = async (warningMsg) => {
     if (!ENABLE_TELEGRAM) return;
 
@@ -789,7 +814,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     const telegramPromises = [];
 
-    // 1. VIP I Periodic 50-game Full Report
+    // Periodic 50-game Task: Send Full Text Log File & Periodic Report
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
         let periodicReportMessage = `<b>👑👑 VIP II </b>\n`;
         periodicReportMessage += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
@@ -801,6 +826,13 @@ const processAndSendPrediction = async (results, gameId) => {
         periodicReportMessage += formatSystemBlockVip2("X3", stats3, pts3, totalScore3);
 
         telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage));
+
+        // Send txt document backup to the dedicated log channel
+        telegramPromises.push(sendTelegramDocument(
+            TELEGRAM_LOG_CHAT_ID,
+            VIP2_LOG_FILE,
+            `📊 <b>VIP II Log Backup</b>\n<b>Game ID:</b> #${gameId}\n<b>Total Predictions:</b> ${totalEvaluatedGamesCount}`
+        ));
     }
 
     // 2. Standard VIP I Message (Only X1 & X2)
