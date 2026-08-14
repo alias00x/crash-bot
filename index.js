@@ -24,11 +24,13 @@ let pendingPrediction1 = null;
 let totalScore2 = 0;
 let pendingPrediction2 = null;
 
+let totalScore3 = 0;
+let pendingPrediction3 = null;
+
 const createStats = () => ({
     under2: { count: 0, negPoints: 0, posPoints: 0 },
     over2: { count: 0, negPoints: 0, posPoints: 0 },
     over10: { count: 0, negPoints: 0, zeroCount: 0, posPoints: 0 },
-    over100: { count: 0, negPoints: 0, zeroCount: 0, pos10Points: 0, pos110Points: 0 },
     totalNegPoints: 0,
     totalPosPoints: 0,
     totalPredictions: 0,
@@ -37,6 +39,19 @@ const createStats = () => ({
 
 let stats1 = createStats();
 let stats2 = createStats();
+let stats3 = createStats();
+
+const getFormattedDateTime = () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const day = pad(now.getDate());
+    const month = pad(now.getMonth() + 1);
+    const year = now.getFullYear();
+    const hours = pad(now.getHours());
+    const minutes = pad(now.getMinutes());
+    const seconds = pad(now.getSeconds());
+    return `🕒 ${day}/${month}/${year} - ${hours}:${minutes}:${seconds}`;
+};
 
 const safeLog = (val) => {
     if (val === 0) return 0;
@@ -59,15 +74,10 @@ const calculatePoints = (pred, actual) => {
         return actual < 2 ? 1 : -1;
     } else if (pred >= 2 && pred < 10) {
         return actual < 2 ? -1 : 1;
-    } else if (pred >= 10 && pred < 100) {
+    } else if (pred >= 10) {
         if (actual < 2) return -2;
         if (actual >= 2 && actual < 10) return 0;
         return 10;
-    } else if (pred >= 100) {
-        if (actual < 2) return -4;
-        if (actual >= 2 && actual < 10) return 0;
-        if (actual >= 10 && actual < 100) return 10;
-        return 110;
     }
     return 0;
 };
@@ -161,17 +171,11 @@ const updateStats = (stats, predVal, actualVal, pts) => {
         stats.over2.count++;
         if (pts > 0) stats.over2.posPoints += pts;
         if (pts < 0) stats.over2.negPoints += pts;
-    } else if (predVal >= 10.0 && predVal < 100.0) {
+    } else if (predVal >= 10.0) {
         stats.over10.count++;
         if (pts === 0) stats.over10.zeroCount++;
         if (pts > 0) stats.over10.posPoints += pts;
         if (pts < 0) stats.over10.negPoints += pts;
-    } else if (predVal >= 100.0) {
-        stats.over100.count++;
-        if (pts === 0) stats.over100.zeroCount++;
-        if (pts === 10) stats.over100.pos10Points += 10;
-        if (pts === 110) stats.over100.pos110Points += 110;
-        if (pts < 0) stats.over100.negPoints += pts;
     }
 
     stats.history20.push(pts);
@@ -362,6 +366,125 @@ const predictFormula2 = (arr) => {
     };
 };
 
+const predictFormula3 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 6) {
+        return { status: 'error', message: 'Array must contain at least 6 numbers.' };
+    }
+
+    const len = arr.length;
+    const n1 = arr[len - 1];
+    const n2 = arr[len - 2];
+    const n3 = arr[len - 3];
+    const n4 = arr[len - 4];
+    const n6 = arr[len - 6];
+
+    const triplet = [n6, n4, n2];
+
+    const step1 = (n6 - 1.0) + (n4 - 1.0);
+    const step2 = (n4 - 1.0) + (n2 - 1.0);
+
+    let result = n2;
+    let predictionDir = 'dn';
+
+    // 1. DOWNWARD PATTERN
+    if (n6 > n4 && n4 > n2) {
+        predictionDir = 'dn';
+        const decreaseRate = step1 !== 0 ? (step1 - step2) / step1 : 0;
+        const raw = n2 * (1 - decreaseRate);
+
+        const countUnder2 = triplet.filter(x => x < 2.0).length;
+        const countBetween2And10 = triplet.filter(x => x >= 2.0 && x < 10.0).length;
+        const countAbove10 = triplet.filter(x => x >= 10.0).length;
+
+        if (countUnder2 >= 2) {
+            result = raw + 1.0;
+        } else if (countBetween2And10 >= 2) {
+            result = raw * 10.0;
+        } else if (countAbove10 === 1 && countBetween2And10 === 1 && countUnder2 === 1) {
+            result = raw * 100.0;
+        } else if (countAbove10 >= 2) {
+            result = raw;
+        } else {
+            result = raw;
+        }
+    }
+    // 2. UPWARD PATTERN
+    else if (n6 < n4 && n4 < n2) {
+        predictionDir = 'up';
+        const growthRate = step1 !== 0 ? (step2 - step1) / step1 : 0;
+        const effectiveGrowth = Math.sqrt(Math.max(0, growthRate));
+
+        const countUnder2 = triplet.filter(x => x < 2.0).length;
+        const countBetween2And10 = triplet.filter(x => x >= 2.0 && x < 10.0).length;
+
+        if (n2 >= 10.0) {
+            result = n2 + (step2 - step1) / 2;
+        } else if (countBetween2And10 >= 2) {
+            result = n2 * (1 + growthRate / 2);
+        } else if (countUnder2 >= 2) {
+            result = n2 * (1 + effectiveGrowth);
+        } else {
+            result = n2 * (1 + effectiveGrowth);
+        }
+
+        const maxAllowed = n2 * 2.5;
+        if (result > maxAllowed) {
+            result = maxAllowed;
+        }
+    }
+    // 3. ZIGZAG PATTERN: VALLEY
+    else if (n6 > n4 && n4 < n2) {
+        predictionDir = 'up';
+        const dropForce = n6 - n4;
+        const scaleRatio = Math.sqrt(n2 / n6);
+        const effectiveForce = dropForce * scaleRatio;
+        const distToFloor = n2 - 1.0;
+
+        if (effectiveForce > distToFloor) {
+            const reboundExcess = effectiveForce - distToFloor;
+            result = 1.0 + reboundExcess;
+        } else {
+            result = n2 - effectiveForce;
+        }
+    }
+    // 4. ZIGZAG PATTERN: PEAK
+    else if (n6 < n4 && n4 > n2) {
+        predictionDir = 'up';
+        const riseForce = n4 + n6;
+        const scaleRatio = Math.sqrt(n2 / n4);
+        const effectiveForce = riseForce * scaleRatio;
+
+        result = n2 + effectiveForce;
+    }
+
+    // LOGARITHMIC VALIDATION LAYER
+    const lnN2 = Math.log(n2);
+    if (lnN2 > 0) {
+        const logCheck = (Math.log(n1) * Math.log(n3)) / lnN2;
+
+        if (n2 < 2.0 && result > n2) {
+            if (logCheck <= n2) {
+                result = logCheck;
+            }
+        }
+
+        if (result > 8.0) {
+            result = logCheck;
+        }
+    }
+
+    if (result < 1.0) {
+        result = 1.0;
+    }
+
+    return {
+        status: 'predict',
+        direction: predictionDir,
+        predictedValue: Number(result.toFixed(2)),
+        wasNegative: false
+    };
+};
+
 const sendTelegramMessage = async (chatId, messageHtml) => {
     if (!chatId || !ENABLE_TELEGRAM) return;
 
@@ -433,15 +556,10 @@ const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) 
     } else if (val >= 2.0 && val < 10.0) {
         const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, baseConf));
         return `${displayVal} 🟢 (${c2}%)${note}`;
-    } else if (val >= 10.0 && val < 100.0) {
+    } else {
         const c10 = Math.min(92, Math.max(10, baseConf));
         const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
         return `${displayVal} 🟢 (${c2}%)   10🟡 (${c10}%)${note}`;
-    } else {
-        const c100 = Math.min(90, Math.max(5, baseConf));
-        const c10 = Math.min(98, Math.round(c100 + (100 - c100) * 0.65 * factor));
-        const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
-        return `${displayVal} 🟢🟢 (${c2}%)   10🟡 (${c10}%)  100🟡 (${c100}%)${note}`;
     }
 };
 
@@ -477,11 +595,6 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     const o10Zero = stats.over10.zeroCount;
     const o10Pos = stats.over10.posPoints >= 0 ? `+${stats.over10.posPoints}` : `${stats.over10.posPoints}`;
 
-    const o100Neg = stats.over100.negPoints;
-    const o100Zero = stats.over100.zeroCount;
-    const o100Pos10 = stats.over100.pos10Points >= 0 ? `+${stats.over100.pos10Points}` : `${stats.over100.pos10Points}`;
-    const o100Pos110 = stats.over100.pos110Points >= 0 ? `+${stats.over100.pos110Points}` : `${stats.over100.pos110Points}`;
-
     let neg20 = 0;
     let pos20 = 0;
     stats.history20.forEach(p => {
@@ -495,7 +608,6 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     str += `<b>- 2:</b> ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
     str += `<b>+2:</b> ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
     str += `<b>+10:</b> ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})\n`;
-    str += `<b>+100:</b> ${stats.over100.count} (${o100Neg} / zero(${o100Zero}) / ${o100Pos10} / ${o100Pos110})\n`;
 
     return str;
 };
@@ -517,11 +629,6 @@ const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
     const o10Zero = stats.over10.zeroCount;
     const o10Pos = stats.over10.posPoints >= 0 ? `+${stats.over10.posPoints}` : `${stats.over10.posPoints}`;
 
-    const o100Neg = stats.over100.negPoints;
-    const o100Zero = stats.over100.zeroCount;
-    const o100Pos10 = stats.over100.pos10Points >= 0 ? `+${stats.over100.pos10Points}` : `${stats.over100.pos10Points}`;
-    const o100Pos110 = stats.over100.pos110Points >= 0 ? `+${stats.over100.pos110Points}` : `${stats.over100.pos110Points}`;
-
     let neg20 = 0;
     let pos20 = 0;
     stats.history20.forEach(p => {
@@ -534,14 +641,14 @@ const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
     str += `Last 20 (${neg20} / ${pos20Str})\n`;
     str += `- 2: ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
     str += `+2: ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
-    str += `+10: ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})\n`;
-    str += `+100: ${stats.over100.count} (${o100Neg} / zero(${o100Zero}) / ${o100Pos10} / ${o100Pos110})`;
+    str += `+10: ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})`;
 
     return str;
 };
 
 const processAndSendPrediction = async (results, gameId) => {
     const actualValue = results[results.length - 1];
+    const timeStr = getFormattedDateTime();
 
     totalEvaluatedGamesCount++;
 
@@ -559,8 +666,16 @@ const processAndSendPrediction = async (results, gameId) => {
         updateStats(stats2, pendingPrediction2.predictedValue, actualValue, pts2);
     }
 
+    let pts3 = 0;
+    if (pendingPrediction3 !== null && pendingPrediction3.status === 'predict') {
+        pts3 = calculatePoints(pendingPrediction3.predictedValue, actualValue);
+        totalScore3 += pts3;
+        updateStats(stats3, pendingPrediction3.predictedValue, actualValue, pts3);
+    }
+
     const nextPrediction1 = predictFormula1(results);
     const nextPrediction2 = predictFormula2(results);
+    const nextPrediction3 = predictFormula3(results);
     const nextCustomPrediction = checkCustomException(results);
 
     if (nextPrediction1 && nextPrediction1.status === 'predict') {
@@ -569,6 +684,10 @@ const processAndSendPrediction = async (results, gameId) => {
 
     if (nextPrediction2 && nextPrediction2.status === 'predict') {
         stats2.totalPredictions++;
+    }
+
+    if (nextPrediction3 && nextPrediction3.status === 'predict') {
+        stats3.totalPredictions++;
     }
 
     const f1Active = nextPrediction1 && nextPrediction1.status === 'predict';
@@ -625,20 +744,21 @@ const processAndSendPrediction = async (results, gameId) => {
     // 1. VIP I Periodic 50-game Full Report
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
         let periodicReportMessage = `<b>👑👑 VIP II </b>\n`;
-        periodicReportMessage += `<b>Game ID:</b> #${gameId}\n`;
+        periodicReportMessage += `<b>Game ID:</b> #${gameId} | ${timeStr}\n`;
         periodicReportMessage += `${last4Formatted}\n`;
         periodicReportMessage += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
         periodicReportMessage += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
-        periodicReportMessage += formatSystemBlockVip2("X2", stats2, pts2, totalScore2);
+        periodicReportMessage += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
+        periodicReportMessage += formatSystemBlockVip2("X3", stats3, pts3, totalScore3);
 
         telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage));
     }
 
-    // 2. Standard VIP I Message
+    // 2. Standard VIP I Message (Only X1 & X2)
     let vip1Status = isGoodSignal ? "Good" : "Normal";
     let vip1Message = `<b>👑 VIP I </b>\n`;
-    vip1Message += `<b>Game ID:</b> #${gameId}\n`;
+    vip1Message += `<b>Game ID:</b> #${gameId} | ${timeStr}\n`;
     vip1Message += `${last4Formatted}\n`;
     vip1Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
@@ -651,24 +771,26 @@ const processAndSendPrediction = async (results, gameId) => {
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message));
 
-    // 3. Standard VIP II Message
+    // 3. Standard VIP II Message (Includes X1, X2, and X3)
     let vip2Message = `<b>👑👑 VIP II </b>\n`;
-    vip2Message += `<b>Game ID:</b> #${gameId}\n`;
+    vip2Message += `<b>Game ID:</b> #${gameId} | ${timeStr}\n`;
     vip2Message += `${last4Formatted}\n`;
     vip2Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
     vip2Message += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
     vip2Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
+    vip2Message += formatSystemBlockVip2("X3", stats3, pts3, totalScore3) + "\n";
 
     vip2Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-    vip2Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}`;
+    vip2Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
+    vip2Message += `<b>Next X3:</b>  ${formatNextLine(nextPrediction3, results, false, false)}`;
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
     // 4. VIP 4 Condition: Both X1 and X2 are Active & Agreed & Both Conf > 30%
     if (isGoodSignal) {
         let vip4Message = `<b>👑👑👑👑 VIP 4 </b>\n`;
-        vip4Message += `<b>Game ID:</b> #${gameId}\n`;
+        vip4Message += `<b>Game ID:</b> #${gameId} | ${timeStr}\n`;
         vip4Message += `${last4Formatted}\n`;
         vip4Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
@@ -683,15 +805,17 @@ const processAndSendPrediction = async (results, gameId) => {
 
     let consoleReport = `==================================================\n`;
     consoleReport += `👑 VIP II REPORT (CONSOLE) 👑\n`;
-    consoleReport += `Game ID: #${gameId} | Actual Result: ${actualValue}\n`;
+    consoleReport += `Game ID: #${gameId} | ${timeStr} | Actual Result: ${actualValue}\n`;
     consoleReport += `Last 4 Results: ${last4.join(' | ')}\n`;
     consoleReport += `Total Predictions: ${totalEvaluatedGamesCount}\n`;
     consoleReport += `--------------------------------------------------\n`;
     consoleReport += formatSystemBlockConsole("X1", stats1, pts1, totalScore1) + "\n\n";
-    consoleReport += formatSystemBlockConsole("X2", stats2, pts2, totalScore2) + "\n";
+    consoleReport += formatSystemBlockConsole("X2", stats2, pts2, totalScore2) + "\n\n";
+    consoleReport += formatSystemBlockConsole("X3", stats3, pts3, totalScore3) + "\n";
     consoleReport += `--------------------------------------------------\n`;
     consoleReport += `Next X1:  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
     consoleReport += `Next X2:  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
+    consoleReport += `Next X3:  ${formatNextLine(nextPrediction3, results, false, false)}\n`;
     consoleReport += `Next Custom: ${formatCustomLine(nextCustomPrediction)}\n`;
     consoleReport += `==================================================`;
 
@@ -699,6 +823,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     pendingPrediction1 = nextPrediction1;
     pendingPrediction2 = nextPrediction2;
+    pendingPrediction3 = nextPrediction3;
 
     await Promise.all(telegramPromises);
 };
