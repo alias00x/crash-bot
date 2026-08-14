@@ -3,6 +3,8 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TELEGRAM_VIPI_CHAT_ID = "-1003909320436";
@@ -11,6 +13,7 @@ const TELEGRAM_VIP4_CHAT_ID = "-1003926861194";
 const ENABLE_TELEGRAM = true;
 
 const TARGET_URL = "https://bc.game/game/crash";
+const VIP2_LOG_FILE = path.join(__dirname, 'vip2_reports.txt');
 
 let lastProcessedGameId = null;
 let consecutiveSequentialCount = 0;
@@ -41,7 +44,7 @@ let stats1 = createStats();
 let stats2 = createStats();
 let stats3 = createStats();
 
-const getFormattedDateTime = () => {
+const getFormattedDateTime = (includeIcon = true) => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const day = pad(now.getDate());
@@ -50,7 +53,8 @@ const getFormattedDateTime = () => {
     const hours = pad(now.getHours());
     const minutes = pad(now.getMinutes());
     const seconds = pad(now.getSeconds());
-    return `🕒 ${day}/${month}/${year} - ${hours}:${minutes}:${seconds}`;
+    const timeStr = `${day}/${month}/${year} - ${hours}:${minutes}:${seconds}`;
+    return includeIcon ? `🕒 ${timeStr}` : timeStr;
 };
 
 const safeLog = (val) => {
@@ -532,9 +536,9 @@ const formatColoredNum = (num) => {
     return `🟡 ${num}`;
 };
 
-const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) => {
+const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict, isPlain = false) => {
     if (!prediction || prediction.status === 'wait') {
-        return "wait ⚪";
+        return isPlain ? "wait" : "wait ⚪";
     }
     const val = prediction.predictedValue;
     const displayVal = val >= 1000 ? "+1000" : val;
@@ -549,6 +553,20 @@ const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) 
     }
 
     const factor = Math.max(0.2, baseConf / 100);
+
+    if (isPlain) {
+        if (val < 2.0) {
+            const c0 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 5, baseConf));
+            return `${displayVal} (${c0}%)${note}`;
+        } else if (val >= 2.0 && val < 10.0) {
+            const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, baseConf));
+            return `${displayVal} (${c2}%)${note}`;
+        } else {
+            const c10 = Math.min(92, Math.max(10, baseConf));
+            const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
+            return `${displayVal} (${c2}%) 10 (${c10}%)${note}`;
+        }
+    }
 
     if (val < 2.0) {
         const c0 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 5, baseConf));
@@ -612,7 +630,7 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     return str;
 };
 
-const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
+const formatSystemBlockPlain = (sysName, stats, lastPts, totalScore) => {
     const ptsSign = lastPts >= 0 ? `+${lastPts}` : `${lastPts}`;
     const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
 
@@ -637,7 +655,7 @@ const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
     });
     const pos20Str = pos20 >= 0 ? `+${pos20}` : `${pos20}`;
 
-    let str = `🩵 ${sysName}: Total: ${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}\n`;
+    let str = `${sysName}: Total: ${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}\n`;
     str += `Last 20 (${neg20} / ${pos20Str})\n`;
     str += `- 2: ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
     str += `+2: ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
@@ -646,9 +664,36 @@ const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
     return str;
 };
 
+const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
+    return formatSystemBlockPlain(sysName, stats, lastPts, totalScore);
+};
+
+const saveVip2ReportToFile = (gameId, timeText, results, actualValue, nextPrediction1, nextPrediction2, nextPrediction3, f1Winner, f1Loser, f2Winner, f2Loser, pts1, pts2, pts3) => {
+    const last4 = results.slice(-4);
+    let logText = `==================================================\n`;
+    logText += `VIP II REPORT\n`;
+    logText += `Game ID: #${gameId} | Date: ${timeText} | Actual Result: ${actualValue}\n`;
+    logText += `Last 4 Results: ${last4.join(' | ')}\n`;
+    logText += `Total Predictions: ${totalEvaluatedGamesCount}\n`;
+    logText += `--------------------------------------------------\n`;
+    logText += formatSystemBlockPlain("X1", stats1, pts1, totalScore1) + "\n\n";
+    logText += formatSystemBlockPlain("X2", stats2, pts2, totalScore2) + "\n\n";
+    logText += formatSystemBlockPlain("X3", stats3, pts3, totalScore3) + "\n";
+    logText += `--------------------------------------------------\n`;
+    logText += `Next X1: ${formatNextLine(nextPrediction1, results, f1Winner, f1Loser, true)}\n`;
+    logText += `Next X2: ${formatNextLine(nextPrediction2, results, f2Winner, f2Loser, true)}\n`;
+    logText += `Next X3: ${formatNextLine(nextPrediction3, results, false, false, true)}\n`;
+    logText += `==================================================\n\n`;
+
+    fs.appendFile(VIP2_LOG_FILE, logText, 'utf8', (err) => {
+        if (err) console.error("[FILE WRITE ERROR]", err.message);
+    });
+};
+
 const processAndSendPrediction = async (results, gameId) => {
     const actualValue = results[results.length - 1];
-    const timeStr = getFormattedDateTime();
+    const timeStrWithIcon = getFormattedDateTime(true);
+    const timeStrPlain = getFormattedDateTime(false);
 
     totalEvaluatedGamesCount++;
 
@@ -739,12 +784,15 @@ const processAndSendPrediction = async (results, gameId) => {
     const last4 = results.slice(-4);
     const last4Formatted = last4.map(num => formatColoredNum(num)).join('  ');
 
+    // Save Plain Text Report to file
+    saveVip2ReportToFile(gameId, timeStrPlain, results, actualValue, nextPrediction1, nextPrediction2, nextPrediction3, f1WinnerInConflict, f1LoserInConflict, f2WinnerInConflict, f2LoserInConflict, pts1, pts2, pts3);
+
     const telegramPromises = [];
 
     // 1. VIP I Periodic 50-game Full Report
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
         let periodicReportMessage = `<b>👑👑 VIP II </b>\n`;
-        periodicReportMessage += `<b>Game ID:</b> #${gameId} | ${timeStr}\n`;
+        periodicReportMessage += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
         periodicReportMessage += `${last4Formatted}\n`;
         periodicReportMessage += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
@@ -758,7 +806,7 @@ const processAndSendPrediction = async (results, gameId) => {
     // 2. Standard VIP I Message (Only X1 & X2)
     let vip1Status = isGoodSignal ? "Good" : "Normal";
     let vip1Message = `<b>👑 VIP I </b>\n`;
-    vip1Message += `<b>Game ID:</b> #${gameId} | ${timeStr}\n`;
+    vip1Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
     vip1Message += `${last4Formatted}\n`;
     vip1Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
@@ -773,7 +821,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     // 3. Standard VIP II Message (Includes X1, X2, and X3)
     let vip2Message = `<b>👑👑 VIP II </b>\n`;
-    vip2Message += `<b>Game ID:</b> #${gameId} | ${timeStr}\n`;
+    vip2Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last4Formatted}\n`;
     vip2Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
@@ -790,7 +838,7 @@ const processAndSendPrediction = async (results, gameId) => {
     // 4. VIP 4 Condition: Both X1 and X2 are Active & Agreed & Both Conf > 30%
     if (isGoodSignal) {
         let vip4Message = `<b>👑👑👑👑 VIP 4 </b>\n`;
-        vip4Message += `<b>Game ID:</b> #${gameId} | ${timeStr}\n`;
+        vip4Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
         vip4Message += `${last4Formatted}\n`;
         vip4Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
 
@@ -805,7 +853,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     let consoleReport = `==================================================\n`;
     consoleReport += `👑 VIP II REPORT (CONSOLE) 👑\n`;
-    consoleReport += `Game ID: #${gameId} | ${timeStr} | Actual Result: ${actualValue}\n`;
+    consoleReport += `Game ID: #${gameId} | ${timeStrWithIcon} | Actual Result: ${actualValue}\n`;
     consoleReport += `Last 4 Results: ${last4.join(' | ')}\n`;
     consoleReport += `Total Predictions: ${totalEvaluatedGamesCount}\n`;
     consoleReport += `--------------------------------------------------\n`;
