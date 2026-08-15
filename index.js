@@ -34,6 +34,10 @@ let totalScore3 = 0;
 let pendingPrediction3 = null;
 let pendingConf3 = null;
 
+let totalScore4 = 0;
+let pendingPrediction4 = null;
+let pendingConf4 = null;
+
 let gameHistoryRows = [];
 let lastTelegramUpdateId = 0;
 
@@ -50,6 +54,7 @@ const createStats = () => ({
 let stats1 = createStats();
 let stats2 = createStats();
 let stats3 = createStats();
+let stats4 = createStats();
 
 const getFormattedDateTime = (includeIcon = true) => {
     const now = new Date();
@@ -397,7 +402,6 @@ const predictFormula3 = (arr) => {
     let result = n2;
     let predictionDir = 'dn';
 
-    // 1. DOWNWARD PATTERN
     if (n6 > n4 && n4 > n2) {
         predictionDir = 'dn';
         const decreaseRate = step1 !== 0 ? (step1 - step2) / step1 : 0;
@@ -419,7 +423,6 @@ const predictFormula3 = (arr) => {
             result = raw;
         }
     }
-    // 2. UPWARD PATTERN
     else if (n6 < n4 && n4 < n2) {
         predictionDir = 'up';
         const growthRate = step1 !== 0 ? (step2 - step1) / step1 : 0;
@@ -443,7 +446,6 @@ const predictFormula3 = (arr) => {
             result = maxAllowed;
         }
     }
-    // 3. ZIGZAG PATTERN: VALLEY
     else if (n6 > n4 && n4 < n2) {
         predictionDir = 'up';
         const dropForce = n6 - n4;
@@ -458,7 +460,6 @@ const predictFormula3 = (arr) => {
             result = n2 - effectiveForce;
         }
     }
-    // 4. ZIGZAG PATTERN: PEAK
     else if (n6 < n4 && n4 > n2) {
         predictionDir = 'up';
         const riseForce = n4 + n6;
@@ -468,7 +469,6 @@ const predictFormula3 = (arr) => {
         result = n2 + effectiveForce;
     }
 
-    // LOGARITHMIC VALIDATION LAYER
     const lnN2 = Math.log(n2);
     if (lnN2 > 0) {
         const logCheck = (Math.log(n1) * Math.log(n3)) / lnN2;
@@ -494,6 +494,125 @@ const predictFormula3 = (arr) => {
         predictedValue: Number(result.toFixed(2)),
         wasNegative: false
     };
+};
+
+const predictFormula4 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 3) {
+        return { status: 'wait' };
+    }
+
+    const len = arr.length;
+    const n3 = parseFloat(arr[len - 3]);
+    const n2 = parseFloat(arr[len - 2]);
+    const n1 = parseFloat(arr[len - 1]);
+
+    if (isNaN(n1) || isNaN(n2) || isNaN(n3)) {
+        return { status: 'wait' };
+    }
+
+    // 1. Exhaustion after super multiplier (>= 20.0)
+    if (n1 >= 20.0) {
+        return {
+            status: 'predict',
+            direction: 'dn',
+            predictedValue: 1.50,
+            wasNegative: false
+        };
+    }
+
+    // 2. Compressed spring and red channel continuation
+    if (n1 < 2.00 && n2 < 2.00) {
+        if (n1 <= 1.30 && n2 <= 1.30) {
+            return {
+                status: 'predict',
+                direction: 'up',
+                predictedValue: 2.00,
+                wasNegative: false
+            };
+        }
+        if (n3 < 2.00) {
+            return {
+                status: 'predict',
+                direction: 'dn',
+                predictedValue: 1.50,
+                wasNegative: false
+            };
+        }
+    }
+
+    // 3. Ping-pong and Sandwich pivots
+    if (n3 < 2.00 && n2 >= 2.00 && n1 < 2.00) {
+        return {
+            status: 'predict',
+            direction: 'up',
+            predictedValue: 2.00,
+            wasNegative: false
+        };
+    }
+
+    if (n3 >= 2.00 && n2 < 2.00 && n1 >= 2.00) {
+        return {
+            status: 'predict',
+            direction: 'dn',
+            predictedValue: 1.50,
+            wasNegative: false
+        };
+    }
+
+    // 4. Consecutive green wave (G-G-G)
+    if (n1 >= 2.00 && n2 >= 2.00 && n3 >= 2.00) {
+        const d1 = Math.log(n1);
+        const d2 = Math.log(n2);
+        const d3 = Math.log(n3);
+        let cashout = 2.00;
+
+        if (d2 !== 0) {
+            const power = (d1 * d3) / d2;
+            if (power < 10) {
+                const predicted = Math.exp(power);
+                cashout = predicted >= 3.0 ? Math.min(Math.floor(predicted), 5.0) : 2.00;
+            }
+        }
+        return {
+            status: 'predict',
+            direction: 'up',
+            predictedValue: Number(cashout.toFixed(2)),
+            wasNegative: false
+        };
+    }
+
+    // 5. Monotonic logarithmic ratio
+    const isMonotonic = (n2 > Math.min(n1, n3)) && (n2 < Math.max(n1, n3));
+    if (isMonotonic) {
+        const d1 = Math.log(n1);
+        const d2 = Math.log(n2);
+        const d3 = Math.log(n3);
+
+        if (d2 !== 0) {
+            const power = (d1 * d3) / d2;
+
+            if (power < 0.693) {
+                const predictedVal = Math.exp(power);
+                return {
+                    status: 'predict',
+                    direction: 'dn',
+                    predictedValue: Number(predictedVal.toFixed(2)),
+                    wasNegative: false
+                };
+            } else if (power < 10) {
+                const predicted = Math.exp(power);
+                const cashout = predicted >= 10.0 ? 10.0 : Math.floor(predicted);
+                return {
+                    status: 'predict',
+                    direction: 'up',
+                    predictedValue: Number(cashout.toFixed(2)),
+                    wasNegative: false
+                };
+            }
+        }
+    }
+
+    return { status: 'wait' };
 };
 
 const sendTelegramMessage = async (chatId, messageHtml) => {
@@ -564,10 +683,10 @@ const generateStructuredLogFile = () => {
     const fmtO10 = (s) => `${s.over10.count}(${s.over10.negPoints} / zero(${s.over10.zeroCount}) / ${s.over10.posPoints >= 0 ? '+' : ''}${s.over10.posPoints})`;
 
     output += `\n`;
-    output += `         X1     |      X2      |     X3\n`;
-    output += `-2: ${fmtU2(stats1)},  ${fmtU2(stats2)},  ${fmtU2(stats3)}\n`;
-    output += `+2: ${fmtO2(stats1)},  ${fmtO2(stats2)},  ${fmtO2(stats3)}\n`;
-    output += `+10: ${fmtO10(stats1)},  ${fmtO10(stats2)},  ${fmtO10(stats3)}\n`;
+    output += `         X1     |      X2      |     X3      |     X4\n`;
+    output += `-2: ${fmtU2(stats1)},  ${fmtU2(stats2)},  ${fmtU2(stats3)},  ${fmtU2(stats4)}\n`;
+    output += `+2: ${fmtO2(stats1)},  ${fmtO2(stats2)},  ${fmtO2(stats3)},  ${fmtO2(stats4)}\n`;
+    output += `+10: ${fmtO10(stats1)},  ${fmtO10(stats2)},  ${fmtO10(stats3)},  ${fmtO10(stats4)}\n`;
 
     fs.writeFileSync(VIP2_LOG_FILE, output, 'utf8');
 };
@@ -809,6 +928,24 @@ const processAndSendPrediction = async (results, gameId) => {
         x: 'X3'
     });
 
+    // Evaluate X4
+    let pts4 = 0;
+    let predVal4 = "wait";
+    if (pendingPrediction4 !== null && pendingPrediction4.status === 'predict') {
+        predVal4 = pendingPrediction4.predictedValue;
+        pts4 = calculatePoints(predVal4, actualValue);
+        totalScore4 += pts4;
+        updateStats(stats4, predVal4, actualValue, pts4);
+    }
+    gameHistoryRows.push({
+        gameId,
+        pred: predVal4,
+        actual: actualValue,
+        conf: pendingConf4 !== null ? pendingConf4 : '-',
+        pts: pts4,
+        x: 'X4'
+    });
+
     // Limit memory footprint: keep latest 3000 rows
     if (gameHistoryRows.length > 3000) {
         gameHistoryRows = gameHistoryRows.slice(-3000);
@@ -820,11 +957,13 @@ const processAndSendPrediction = async (results, gameId) => {
     const nextPrediction1 = predictFormula1(results);
     const nextPrediction2 = predictFormula2(results);
     const nextPrediction3 = predictFormula3(results);
+    const nextPrediction4 = predictFormula4(results);
     const nextCustomPrediction = checkCustomException(results);
 
     if (nextPrediction1 && nextPrediction1.status === 'predict') stats1.totalPredictions++;
     if (nextPrediction2 && nextPrediction2.status === 'predict') stats2.totalPredictions++;
     if (nextPrediction3 && nextPrediction3.status === 'predict') stats3.totalPredictions++;
+    if (nextPrediction4 && nextPrediction4.status === 'predict') stats4.totalPredictions++;
 
     const f1Active = nextPrediction1 && nextPrediction1.status === 'predict';
     const f2Active = nextPrediction2 && nextPrediction2.status === 'predict';
@@ -868,6 +1007,7 @@ const processAndSendPrediction = async (results, gameId) => {
     const conf1 = f1Active ? calculateConfidence(nextPrediction1.predictedValue, results) : null;
     const conf2 = f2Active ? calculateConfidence(nextPrediction2.predictedValue, results) : null;
     const conf3 = (nextPrediction3 && nextPrediction3.status === 'predict') ? calculateConfidence(nextPrediction3.predictedValue, results) : null;
+    const conf4 = (nextPrediction4 && nextPrediction4.status === 'predict') ? calculateConfidence(nextPrediction4.predictedValue, results) : null;
 
     const f1Over2 = f1Active ? nextPrediction1.predictedValue >= 2.0 : false;
     const f2Over2 = f2Active ? nextPrediction2.predictedValue >= 2.0 : false;
@@ -887,7 +1027,8 @@ const processAndSendPrediction = async (results, gameId) => {
 
         periodicReportMessage += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
         periodicReportMessage += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
-        periodicReportMessage += formatSystemBlockVip2("X3", stats3, pts3, totalScore3);
+        periodicReportMessage += formatSystemBlockVip2("X3", stats3, pts3, totalScore3) + "\n";
+        periodicReportMessage += formatSystemBlockVip2("X4", stats4, pts4, totalScore4);
 
         telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage));
 
@@ -898,7 +1039,7 @@ const processAndSendPrediction = async (results, gameId) => {
         ));
     }
 
-    // 2. Standard VIP I Message
+    // 2. Standard VIP I Message (X4 is NOT included here)
     let vip1Status = isGoodSignal ? "Good" : "Normal";
     let vip1Message = `<b>👑 VIP I </b>\n`;
     vip1Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
@@ -914,7 +1055,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message));
 
-    // 3. Standard VIP II Message
+    // 3. Standard VIP II Message (Includes X1, X2, X3, X4)
     let vip2Message = `<b>👑👑 VIP II </b>\n`;
     vip2Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last4Formatted}\n`;
@@ -923,14 +1064,16 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
     vip2Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
     vip2Message += formatSystemBlockVip2("X3", stats3, pts3, totalScore3) + "\n";
+    vip2Message += formatSystemBlockVip2("X4", stats4, pts4, totalScore4) + "\n";
 
     vip2Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
     vip2Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
-    vip2Message += `<b>Next X3:</b>  ${formatNextLine(nextPrediction3, results, false, false)}`;
+    vip2Message += `<b>Next X3:</b>  ${formatNextLine(nextPrediction3, results, false, false)}\n`;
+    vip2Message += `<b>Next X4:</b>  ${formatNextLine(nextPrediction4, results, false, false)}`;
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // 4. VIP 4 Condition
+    // 4. VIP 4 Condition (X4 is NOT included here)
     if (isGoodSignal) {
         let vip4Message = `<b>👑👑👑👑 VIP 4 </b>\n`;
         vip4Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
@@ -954,11 +1097,13 @@ const processAndSendPrediction = async (results, gameId) => {
     consoleReport += `--------------------------------------------------\n`;
     consoleReport += formatSystemBlockConsole("X1", stats1, pts1, totalScore1) + "\n\n";
     consoleReport += formatSystemBlockConsole("X2", stats2, pts2, totalScore2) + "\n\n";
-    consoleReport += formatSystemBlockConsole("X3", stats3, pts3, totalScore3) + "\n";
+    consoleReport += formatSystemBlockConsole("X3", stats3, pts3, totalScore3) + "\n\n";
+    consoleReport += formatSystemBlockConsole("X4", stats4, pts4, totalScore4) + "\n";
     consoleReport += `--------------------------------------------------\n`;
     consoleReport += `Next X1:  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
     consoleReport += `Next X2:  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
     consoleReport += `Next X3:  ${formatNextLine(nextPrediction3, results, false, false)}\n`;
+    consoleReport += `Next X4:  ${formatNextLine(nextPrediction4, results, false, false)}\n`;
     consoleReport += `Next Custom: ${formatCustomLine(nextCustomPrediction)}\n`;
     consoleReport += `==================================================`;
 
@@ -972,6 +1117,9 @@ const processAndSendPrediction = async (results, gameId) => {
 
     pendingPrediction3 = nextPrediction3;
     pendingConf3 = conf3;
+
+    pendingPrediction4 = nextPrediction4;
+    pendingConf4 = conf4;
 
     await Promise.all(telegramPromises);
 };
