@@ -24,12 +24,18 @@ let totalEvaluatedGamesCount = 0;
 
 let totalScore1 = 0;
 let pendingPrediction1 = null;
+let pendingConf1 = null;
 
 let totalScore2 = 0;
 let pendingPrediction2 = null;
+let pendingConf2 = null;
 
 let totalScore3 = 0;
 let pendingPrediction3 = null;
+let pendingConf3 = null;
+
+let gameHistoryRows = [];
+let lastTelegramUpdateId = 0;
 
 const createStats = () => ({
     under2: { count: 0, negPoints: 0, posPoints: 0 },
@@ -532,6 +538,74 @@ const sendTelegramDocument = async (chatId, filePath, caption = "") => {
     }
 };
 
+const generateStructuredLogFile = () => {
+    const timeText = getFormattedDateTime(false);
+    let output = `VIP II Report | Date: ${timeText}\n\n`;
+    output += `Game ID  | Predicted | Actual |  %  | Point | X\n`;
+
+    gameHistoryRows.forEach(row => {
+        const cGame = `#${row.gameId}`.padEnd(9, ' ');
+        const cPred = String(row.pred).padEnd(10, ' ');
+        const cAct = (typeof row.actual === 'number' ? row.actual.toFixed(2) : String(row.actual)).padEnd(7, ' ');
+        const cConf = (row.conf !== null && row.conf !== '-' ? `${row.conf}%` : '-').padEnd(4, ' ');
+        
+        let ptsFormatted = "-";
+        if (row.pts !== null && row.pts !== undefined) {
+            ptsFormatted = row.pts >= 0 ? `+${row.pts}` : `${row.pts}`;
+        }
+        const cPts = ` ${ptsFormatted} `.padEnd(6, ' ');
+        const cX = row.x;
+
+        output += `${cGame}| ${cPred}| ${cAct}| ${cConf}| ${cPts}| ${cX}\n`;
+    });
+
+    const fmtU2 = (s) => `${s.under2.count}(${s.under2.negPoints} / ${s.under2.posPoints >= 0 ? '+' : ''}${s.under2.posPoints})`;
+    const fmtO2 = (s) => `${s.over2.count}(${s.over2.negPoints} / ${s.over2.posPoints >= 0 ? '+' : ''}${s.over2.posPoints})`;
+    const fmtO10 = (s) => `${s.over10.count}(${s.over10.negPoints} / zero(${s.over10.zeroCount}) / ${s.over10.posPoints >= 0 ? '+' : ''}${s.over10.posPoints})`;
+
+    output += `\n`;
+    output += `         X1     |      X2      |     X3\n`;
+    output += `-2: ${fmtU2(stats1)},  ${fmtU2(stats2)},  ${fmtU2(stats3)}\n`;
+    output += `+2: ${fmtO2(stats1)},  ${fmtO2(stats2)},  ${fmtO2(stats3)}\n`;
+    output += `+10: ${fmtO10(stats1)},  ${fmtO10(stats2)},  ${fmtO10(stats3)}\n`;
+
+    fs.writeFileSync(VIP2_LOG_FILE, output, 'utf8');
+};
+
+const checkTelegramCommands = async () => {
+    if (!ENABLE_TELEGRAM) return;
+
+    try {
+        const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${lastTelegramUpdateId + 1}&timeout=5`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (data.ok && Array.isArray(data.result)) {
+            for (const update of data.result) {
+                lastTelegramUpdateId = update.update_id;
+
+                const msg = update.message || update.channel_post;
+                if (!msg || !msg.text) continue;
+
+                const text = msg.text.trim().toLowerCase();
+                const senderChatId = msg.chat.id;
+
+                if (text === '/report' || text === '/file' || text === '/log') {
+                    console.log(`[TELEGRAM COMMAND] Executing ${text} request for chat ${senderChatId}`);
+                    generateStructuredLogFile();
+                    await sendTelegramDocument(
+                        senderChatId,
+                        VIP2_LOG_FILE,
+                        `📁 <b>VIP II Log Report</b>\n<b>Games Evaluated:</b> ${totalEvaluatedGamesCount}\n<b>Time:</b> ${getFormattedDateTime(false)}`
+                    );
+                }
+            }
+        }
+    } catch (error) {
+        // Silently skip update poll errors
+    }
+};
+
 const sendVipWarningAlert = async (warningMsg) => {
     if (!ENABLE_TELEGRAM) return;
 
@@ -561,9 +635,9 @@ const formatColoredNum = (num) => {
     return `🟡 ${num}`;
 };
 
-const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict, isPlain = false) => {
+const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) => {
     if (!prediction || prediction.status === 'wait') {
-        return isPlain ? "wait" : "wait ⚪";
+        return "wait ⚪";
     }
     const val = prediction.predictedValue;
     const displayVal = val >= 1000 ? "+1000" : val;
@@ -578,20 +652,6 @@ const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict, 
     }
 
     const factor = Math.max(0.2, baseConf / 100);
-
-    if (isPlain) {
-        if (val < 2.0) {
-            const c0 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 5, baseConf));
-            return `${displayVal} (${c0}%)${note}`;
-        } else if (val >= 2.0 && val < 10.0) {
-            const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, baseConf));
-            return `${displayVal} (${c2}%)${note}`;
-        } else {
-            const c10 = Math.min(92, Math.max(10, baseConf));
-            const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
-            return `${displayVal} (${c2}%) 10 (${c10}%)${note}`;
-        }
-    }
 
     if (val < 2.0) {
         const c0 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 5, baseConf));
@@ -655,7 +715,7 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     return str;
 };
 
-const formatSystemBlockPlain = (sysName, stats, lastPts, totalScore) => {
+const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
     const ptsSign = lastPts >= 0 ? `+${lastPts}` : `${lastPts}`;
     const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
 
@@ -689,76 +749,82 @@ const formatSystemBlockPlain = (sysName, stats, lastPts, totalScore) => {
     return str;
 };
 
-const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
-    return formatSystemBlockPlain(sysName, stats, lastPts, totalScore);
-};
-
-const saveVip2ReportToFile = (gameId, timeText, results, actualValue, nextPrediction1, nextPrediction2, nextPrediction3, f1Winner, f1Loser, f2Winner, f2Loser, pts1, pts2, pts3) => {
-    const last4 = results.slice(-4);
-    let logText = `==================================================\n`;
-    logText += `VIP II REPORT\n`;
-    logText += `Game ID: #${gameId} | Date: ${timeText} | Actual Result: ${actualValue}\n`;
-    logText += `Last 4 Results: ${last4.join(' | ')}\n`;
-    logText += `Total Predictions: ${totalEvaluatedGamesCount}\n`;
-    logText += `--------------------------------------------------\n`;
-    logText += formatSystemBlockPlain("X1", stats1, pts1, totalScore1) + "\n\n";
-    logText += formatSystemBlockPlain("X2", stats2, pts2, totalScore2) + "\n\n";
-    logText += formatSystemBlockPlain("X3", stats3, pts3, totalScore3) + "\n";
-    logText += `--------------------------------------------------\n`;
-    logText += `Next X1: ${formatNextLine(nextPrediction1, results, f1Winner, f1Loser, true)}\n`;
-    logText += `Next X2: ${formatNextLine(nextPrediction2, results, f2Winner, f2Loser, true)}\n`;
-    logText += `Next X3: ${formatNextLine(nextPrediction3, results, false, false, true)}\n`;
-    logText += `==================================================\n\n`;
-
-    fs.appendFile(VIP2_LOG_FILE, logText, 'utf8', (err) => {
-        if (err) console.error("[FILE WRITE ERROR]", err.message);
-    });
-};
-
 const processAndSendPrediction = async (results, gameId) => {
     const actualValue = results[results.length - 1];
     const timeStrWithIcon = getFormattedDateTime(true);
-    const timeStrPlain = getFormattedDateTime(false);
 
     totalEvaluatedGamesCount++;
 
+    // Evaluate X1
     let pts1 = 0;
+    let predVal1 = "wait";
     if (pendingPrediction1 !== null && pendingPrediction1.status === 'predict') {
-        pts1 = calculatePoints(pendingPrediction1.predictedValue, actualValue);
+        predVal1 = pendingPrediction1.predictedValue;
+        pts1 = calculatePoints(predVal1, actualValue);
         totalScore1 += pts1;
-        updateStats(stats1, pendingPrediction1.predictedValue, actualValue, pts1);
+        updateStats(stats1, predVal1, actualValue, pts1);
     }
+    gameHistoryRows.push({
+        gameId,
+        pred: predVal1,
+        actual: actualValue,
+        conf: pendingConf1 !== null ? pendingConf1 : '-',
+        pts: pts1,
+        x: 'X1'
+    });
 
+    // Evaluate X2
     let pts2 = 0;
+    let predVal2 = "wait";
     if (pendingPrediction2 !== null && pendingPrediction2.status === 'predict') {
-        pts2 = calculatePoints(pendingPrediction2.predictedValue, actualValue);
+        predVal2 = pendingPrediction2.predictedValue;
+        pts2 = calculatePoints(predVal2, actualValue);
         totalScore2 += pts2;
-        updateStats(stats2, pendingPrediction2.predictedValue, actualValue, pts2);
+        updateStats(stats2, predVal2, actualValue, pts2);
+    }
+    gameHistoryRows.push({
+        gameId,
+        pred: predVal2,
+        actual: actualValue,
+        conf: pendingConf2 !== null ? pendingConf2 : '-',
+        pts: pts2,
+        x: 'X2'
+    });
+
+    // Evaluate X3
+    let pts3 = 0;
+    let predVal3 = "wait";
+    if (pendingPrediction3 !== null && pendingPrediction3.status === 'predict') {
+        predVal3 = pendingPrediction3.predictedValue;
+        pts3 = calculatePoints(predVal3, actualValue);
+        totalScore3 += pts3;
+        updateStats(stats3, predVal3, actualValue, pts3);
+    }
+    gameHistoryRows.push({
+        gameId,
+        pred: predVal3,
+        actual: actualValue,
+        conf: pendingConf3 !== null ? pendingConf3 : '-',
+        pts: pts3,
+        x: 'X3'
+    });
+
+    // Limit memory footprint: keep latest 3000 rows
+    if (gameHistoryRows.length > 3000) {
+        gameHistoryRows = gameHistoryRows.slice(-3000);
     }
 
-    let pts3 = 0;
-    if (pendingPrediction3 !== null && pendingPrediction3.status === 'predict') {
-        pts3 = calculatePoints(pendingPrediction3.predictedValue, actualValue);
-        totalScore3 += pts3;
-        updateStats(stats3, pendingPrediction3.predictedValue, actualValue, pts3);
-    }
+    // Save formatted txt file to disk
+    generateStructuredLogFile();
 
     const nextPrediction1 = predictFormula1(results);
     const nextPrediction2 = predictFormula2(results);
     const nextPrediction3 = predictFormula3(results);
     const nextCustomPrediction = checkCustomException(results);
 
-    if (nextPrediction1 && nextPrediction1.status === 'predict') {
-        stats1.totalPredictions++;
-    }
-
-    if (nextPrediction2 && nextPrediction2.status === 'predict') {
-        stats2.totalPredictions++;
-    }
-
-    if (nextPrediction3 && nextPrediction3.status === 'predict') {
-        stats3.totalPredictions++;
-    }
+    if (nextPrediction1 && nextPrediction1.status === 'predict') stats1.totalPredictions++;
+    if (nextPrediction2 && nextPrediction2.status === 'predict') stats2.totalPredictions++;
+    if (nextPrediction3 && nextPrediction3.status === 'predict') stats3.totalPredictions++;
 
     const f1Active = nextPrediction1 && nextPrediction1.status === 'predict';
     const f2Active = nextPrediction2 && nextPrediction2.status === 'predict';
@@ -799,22 +865,20 @@ const processAndSendPrediction = async (results, gameId) => {
         }
     }
 
-    const conf1 = f1Active ? calculateConfidence(nextPrediction1.predictedValue, results) : 0;
-    const conf2 = f2Active ? calculateConfidence(nextPrediction2.predictedValue, results) : 0;
+    const conf1 = f1Active ? calculateConfidence(nextPrediction1.predictedValue, results) : null;
+    const conf2 = f2Active ? calculateConfidence(nextPrediction2.predictedValue, results) : null;
+    const conf3 = (nextPrediction3 && nextPrediction3.status === 'predict') ? calculateConfidence(nextPrediction3.predictedValue, results) : null;
+
     const f1Over2 = f1Active ? nextPrediction1.predictedValue >= 2.0 : false;
     const f2Over2 = f2Active ? nextPrediction2.predictedValue >= 2.0 : false;
-
-    const isGoodSignal = f1Active && f2Active && (f1Over2 === f2Over2) && conf1 > 30 && conf2 > 30;
+    const isGoodSignal = f1Active && f2Active && (f1Over2 === f2Over2) && (conf1 || 0) > 30 && (conf2 || 0) > 30;
 
     const last4 = results.slice(-4);
     const last4Formatted = last4.map(num => formatColoredNum(num)).join('  ');
 
-    // Save Plain Text Report to file
-    saveVip2ReportToFile(gameId, timeStrPlain, results, actualValue, nextPrediction1, nextPrediction2, nextPrediction3, f1WinnerInConflict, f1LoserInConflict, f2WinnerInConflict, f2LoserInConflict, pts1, pts2, pts3);
-
     const telegramPromises = [];
 
-    // Periodic 50-game Task: Send Full Text Log File & Periodic Report
+    // 1. Periodic 50-game Task
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
         let periodicReportMessage = `<b>👑👑 VIP II </b>\n`;
         periodicReportMessage += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
@@ -827,15 +891,14 @@ const processAndSendPrediction = async (results, gameId) => {
 
         telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage));
 
-        // Send txt document backup to the dedicated log channel
         telegramPromises.push(sendTelegramDocument(
             TELEGRAM_LOG_CHAT_ID,
             VIP2_LOG_FILE,
-            `📊 <b>VIP II Log Backup</b>\n<b>Game ID:</b> #${gameId}\n<b>Total Predictions:</b> ${totalEvaluatedGamesCount}`
+            `📊 <b>VIP II Formatted Backup</b>\n<b>Game ID:</b> #${gameId}\n<b>Total Predictions:</b> ${totalEvaluatedGamesCount}`
         ));
     }
 
-    // 2. Standard VIP I Message (Only X1 & X2)
+    // 2. Standard VIP I Message
     let vip1Status = isGoodSignal ? "Good" : "Normal";
     let vip1Message = `<b>👑 VIP I </b>\n`;
     vip1Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
@@ -851,7 +914,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message));
 
-    // 3. Standard VIP II Message (Includes X1, X2, and X3)
+    // 3. Standard VIP II Message
     let vip2Message = `<b>👑👑 VIP II </b>\n`;
     vip2Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last4Formatted}\n`;
@@ -867,7 +930,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // 4. VIP 4 Condition: Both X1 and X2 are Active & Agreed & Both Conf > 30%
+    // 4. VIP 4 Condition
     if (isGoodSignal) {
         let vip4Message = `<b>👑👑👑👑 VIP 4 </b>\n`;
         vip4Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
@@ -902,8 +965,13 @@ const processAndSendPrediction = async (results, gameId) => {
     console.log(consoleReport);
 
     pendingPrediction1 = nextPrediction1;
+    pendingConf1 = conf1;
+
     pendingPrediction2 = nextPrediction2;
+    pendingConf2 = conf2;
+
     pendingPrediction3 = nextPrediction3;
+    pendingConf3 = conf3;
 
     await Promise.all(telegramPromises);
 };
@@ -948,6 +1016,9 @@ async function startBot() {
     } catch (e) {
         console.log("[BOT START] Waiting for game table selector...");
     }
+
+    // Check for incoming Telegram commands every 3.5 seconds
+    setInterval(checkTelegramCommands, 3500);
 
     setInterval(async () => {
         try {
