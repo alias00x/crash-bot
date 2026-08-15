@@ -38,6 +38,10 @@ let totalScore4 = 0;
 let pendingPrediction4 = null;
 let pendingConf4 = null;
 
+let totalScore5 = 0;
+let pendingPrediction5 = null;
+let pendingConf5 = null;
+
 let gameHistoryRows = [];
 let lastTelegramUpdateId = 0;
 
@@ -55,6 +59,7 @@ let stats1 = createStats();
 let stats2 = createStats();
 let stats3 = createStats();
 let stats4 = createStats();
+let stats5 = createStats();
 
 const getFormattedDateTime = (includeIcon = true) => {
     const now = new Date();
@@ -510,7 +515,6 @@ const predictFormula4 = (arr) => {
         return { status: 'wait' };
     }
 
-    // 1. Exhaustion after super multiplier (>= 20.0)
     if (n1 >= 20.0) {
         return {
             status: 'predict',
@@ -520,7 +524,6 @@ const predictFormula4 = (arr) => {
         };
     }
 
-    // 2. Compressed spring and red channel continuation
     if (n1 < 2.00 && n2 < 2.00) {
         if (n1 <= 1.30 && n2 <= 1.30) {
             return {
@@ -540,7 +543,6 @@ const predictFormula4 = (arr) => {
         }
     }
 
-    // 3. Ping-pong and Sandwich pivots
     if (n3 < 2.00 && n2 >= 2.00 && n1 < 2.00) {
         return {
             status: 'predict',
@@ -559,7 +561,6 @@ const predictFormula4 = (arr) => {
         };
     }
 
-    // 4. Consecutive green wave (G-G-G)
     if (n1 >= 2.00 && n2 >= 2.00 && n3 >= 2.00) {
         const d1 = Math.log(n1);
         const d2 = Math.log(n2);
@@ -581,7 +582,6 @@ const predictFormula4 = (arr) => {
         };
     }
 
-    // 5. Monotonic logarithmic ratio
     const isMonotonic = (n2 > Math.min(n1, n3)) && (n2 < Math.max(n1, n3));
     if (isMonotonic) {
         const d1 = Math.log(n1);
@@ -613,6 +613,58 @@ const predictFormula4 = (arr) => {
     }
 
     return { status: 'wait' };
+};
+
+const predictFormula5 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 6) {
+        return { status: 'x' };
+    }
+
+    const len = arr.length;
+    const n6 = parseFloat(arr[len - 6]);
+    const n4 = parseFloat(arr[len - 4]);
+    const n3 = parseFloat(arr[len - 3]);
+    const n2 = parseFloat(arr[len - 2]);
+    const n1 = parseFloat(arr[len - 1]);
+
+    if (isNaN(n1) || isNaN(n2) || isNaN(n3) || isNaN(n4) || isNaN(n6)) {
+        return { status: 'x' };
+    }
+
+    const k3 = safeLog(n3);
+    const k2 = safeLog(n2);
+    const k1 = safeLog(n1);
+
+    if (Math.abs(k2) < 1e-9) {
+        return { status: 'x' };
+    }
+
+    const k0 = (k3 * k1) / k2;
+    let rawN0 = safeExp(k0);
+    let finalN0 = rawN0 < 0 ? Math.abs(rawN0) + 1.0 : rawN0;
+    finalN0 = Number(finalN0.toFixed(2));
+
+    const isOver2 = finalN0 >= 2.0;
+    const n4Over2 = n4 >= 2.0;
+    const n6Over2 = n6 >= 2.0;
+
+    if (isOver2 && (n4Over2 || n6Over2)) {
+        return {
+            status: 'predict',
+            direction: 'up',
+            predictedValue: finalN0,
+            wasNegative: false
+        };
+    } else if (!isOver2 && (!n4Over2 || !n6Over2)) {
+        return {
+            status: 'predict',
+            direction: 'dn',
+            predictedValue: finalN0,
+            wasNegative: false
+        };
+    }
+
+    return { status: 'x' };
 };
 
 const sendTelegramMessage = async (chatId, messageHtml) => {
@@ -683,10 +735,10 @@ const generateStructuredLogFile = () => {
     const fmtO10 = (s) => `${s.over10.count}(${s.over10.negPoints} / zero(${s.over10.zeroCount}) / ${s.over10.posPoints >= 0 ? '+' : ''}${s.over10.posPoints})`;
 
     output += `\n`;
-    output += `         X1     |      X2      |     X3      |     X4\n`;
-    output += `-2: ${fmtU2(stats1)},  ${fmtU2(stats2)},  ${fmtU2(stats3)},  ${fmtU2(stats4)}\n`;
-    output += `+2: ${fmtO2(stats1)},  ${fmtO2(stats2)},  ${fmtO2(stats3)},  ${fmtO2(stats4)}\n`;
-    output += `+10: ${fmtO10(stats1)},  ${fmtO10(stats2)},  ${fmtO10(stats3)},  ${fmtO10(stats4)}\n`;
+    output += `         X1     |      X2      |     X3      |     X4      |     X5\n`;
+    output += `-2: ${fmtU2(stats1)},  ${fmtU2(stats2)},  ${fmtU2(stats3)},  ${fmtU2(stats4)},  ${fmtU2(stats5)}\n`;
+    output += `+2: ${fmtO2(stats1)},  ${fmtO2(stats2)},  ${fmtO2(stats3)},  ${fmtO2(stats4)},  ${fmtO2(stats5)}\n`;
+    output += `+10: ${fmtO10(stats1)},  ${fmtO10(stats2)},  ${fmtO10(stats3)},  ${fmtO10(stats4)},  ${fmtO10(stats5)}\n`;
 
     fs.writeFileSync(VIP2_LOG_FILE, output, 'utf8');
 };
@@ -757,6 +809,9 @@ const formatColoredNum = (num) => {
 const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) => {
     if (!prediction || prediction.status === 'wait') {
         return "wait ⚪";
+    }
+    if (prediction.status === 'x') {
+        return "x ⚪";
     }
     const val = prediction.predictedValue;
     const displayVal = val >= 1000 ? "+1000" : val;
@@ -946,6 +1001,28 @@ const processAndSendPrediction = async (results, gameId) => {
         x: 'X4'
     });
 
+    // Evaluate X5
+    let pts5 = 0;
+    let predVal5 = "wait";
+    if (pendingPrediction5 !== null) {
+        if (pendingPrediction5.status === 'predict') {
+            predVal5 = pendingPrediction5.predictedValue;
+            pts5 = calculatePoints(predVal5, actualValue);
+            totalScore5 += pts5;
+            updateStats(stats5, predVal5, actualValue, pts5);
+        } else if (pendingPrediction5.status === 'x') {
+            predVal5 = "x";
+        }
+    }
+    gameHistoryRows.push({
+        gameId,
+        pred: predVal5,
+        actual: actualValue,
+        conf: pendingConf5 !== null ? pendingConf5 : '-',
+        pts: pts5,
+        x: 'X5'
+    });
+
     // Limit memory footprint: keep latest 3000 rows
     if (gameHistoryRows.length > 3000) {
         gameHistoryRows = gameHistoryRows.slice(-3000);
@@ -958,12 +1035,14 @@ const processAndSendPrediction = async (results, gameId) => {
     const nextPrediction2 = predictFormula2(results);
     const nextPrediction3 = predictFormula3(results);
     const nextPrediction4 = predictFormula4(results);
+    const nextPrediction5 = predictFormula5(results);
     const nextCustomPrediction = checkCustomException(results);
 
     if (nextPrediction1 && nextPrediction1.status === 'predict') stats1.totalPredictions++;
     if (nextPrediction2 && nextPrediction2.status === 'predict') stats2.totalPredictions++;
     if (nextPrediction3 && nextPrediction3.status === 'predict') stats3.totalPredictions++;
     if (nextPrediction4 && nextPrediction4.status === 'predict') stats4.totalPredictions++;
+    if (nextPrediction5 && nextPrediction5.status === 'predict') stats5.totalPredictions++;
 
     const f1Active = nextPrediction1 && nextPrediction1.status === 'predict';
     const f2Active = nextPrediction2 && nextPrediction2.status === 'predict';
@@ -1008,6 +1087,7 @@ const processAndSendPrediction = async (results, gameId) => {
     const conf2 = f2Active ? calculateConfidence(nextPrediction2.predictedValue, results) : null;
     const conf3 = (nextPrediction3 && nextPrediction3.status === 'predict') ? calculateConfidence(nextPrediction3.predictedValue, results) : null;
     const conf4 = (nextPrediction4 && nextPrediction4.status === 'predict') ? calculateConfidence(nextPrediction4.predictedValue, results) : null;
+    const conf5 = (nextPrediction5 && nextPrediction5.status === 'predict') ? calculateConfidence(nextPrediction5.predictedValue, results) : null;
 
     const f1Over2 = f1Active ? nextPrediction1.predictedValue >= 2.0 : false;
     const f2Over2 = f2Active ? nextPrediction2.predictedValue >= 2.0 : false;
@@ -1028,7 +1108,8 @@ const processAndSendPrediction = async (results, gameId) => {
         periodicReportMessage += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
         periodicReportMessage += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
         periodicReportMessage += formatSystemBlockVip2("X3", stats3, pts3, totalScore3) + "\n";
-        periodicReportMessage += formatSystemBlockVip2("X4", stats4, pts4, totalScore4);
+        periodicReportMessage += formatSystemBlockVip2("X4", stats4, pts4, totalScore4) + "\n";
+        periodicReportMessage += formatSystemBlockVip2("X5", stats5, pts5, totalScore5);
 
         telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage));
 
@@ -1039,7 +1120,7 @@ const processAndSendPrediction = async (results, gameId) => {
         ));
     }
 
-    // 2. Standard VIP I Message (X4 is NOT included here)
+    // 2. Standard VIP I Message
     let vip1Status = isGoodSignal ? "Good" : "Normal";
     let vip1Message = `<b>👑 VIP I </b>\n`;
     vip1Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
@@ -1055,7 +1136,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message));
 
-    // 3. Standard VIP II Message (Includes X1, X2, X3, X4)
+    // 3. Standard VIP II Message
     let vip2Message = `<b>👑👑 VIP II </b>\n`;
     vip2Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last4Formatted}\n`;
@@ -1065,15 +1146,17 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
     vip2Message += formatSystemBlockVip2("X3", stats3, pts3, totalScore3) + "\n";
     vip2Message += formatSystemBlockVip2("X4", stats4, pts4, totalScore4) + "\n";
+    vip2Message += formatSystemBlockVip2("X5", stats5, pts5, totalScore5) + "\n";
 
     vip2Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
     vip2Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
     vip2Message += `<b>Next X3:</b>  ${formatNextLine(nextPrediction3, results, false, false)}\n`;
-    vip2Message += `<b>Next X4:</b>  ${formatNextLine(nextPrediction4, results, false, false)}`;
+    vip2Message += `<b>Next X4:</b>  ${formatNextLine(nextPrediction4, results, false, false)}\n`;
+    vip2Message += `<b>Next X5:</b>  ${formatNextLine(nextPrediction5, results, false, false)}`;
 
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // 4. VIP 4 Condition (X4 is NOT included here)
+    // 4. VIP 4 Condition
     if (isGoodSignal) {
         let vip4Message = `<b>👑👑👑👑 VIP 4 </b>\n`;
         vip4Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
@@ -1098,12 +1181,14 @@ const processAndSendPrediction = async (results, gameId) => {
     consoleReport += formatSystemBlockConsole("X1", stats1, pts1, totalScore1) + "\n\n";
     consoleReport += formatSystemBlockConsole("X2", stats2, pts2, totalScore2) + "\n\n";
     consoleReport += formatSystemBlockConsole("X3", stats3, pts3, totalScore3) + "\n\n";
-    consoleReport += formatSystemBlockConsole("X4", stats4, pts4, totalScore4) + "\n";
+    consoleReport += formatSystemBlockConsole("X4", stats4, pts4, totalScore4) + "\n\n";
+    consoleReport += formatSystemBlockConsole("X5", stats5, pts5, totalScore5) + "\n";
     consoleReport += `--------------------------------------------------\n`;
     consoleReport += `Next X1:  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
     consoleReport += `Next X2:  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
     consoleReport += `Next X3:  ${formatNextLine(nextPrediction3, results, false, false)}\n`;
     consoleReport += `Next X4:  ${formatNextLine(nextPrediction4, results, false, false)}\n`;
+    consoleReport += `Next X5:  ${formatNextLine(nextPrediction5, results, false, false)}\n`;
     consoleReport += `Next Custom: ${formatCustomLine(nextCustomPrediction)}\n`;
     consoleReport += `==================================================`;
 
@@ -1120,6 +1205,9 @@ const processAndSendPrediction = async (results, gameId) => {
 
     pendingPrediction4 = nextPrediction4;
     pendingConf4 = conf4;
+
+    pendingPrediction5 = nextPrediction5;
+    pendingConf5 = conf5;
 
     await Promise.all(telegramPromises);
 };
