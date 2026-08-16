@@ -1,3 +1,10 @@
+// send report to log every 50
+// send manulaly report (telegram request)
+// X1, X2, X3, X4, x5
+// vip i, ii, 4, log
+
+// added: x11,x12, x21,x22, x31,x32, x41,x42, x51,x52
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -22,26 +29,6 @@ let lastSentVipWarning = "";
 
 let totalEvaluatedGamesCount = 0;
 
-let totalScore1 = 0;
-let pendingPrediction1 = null;
-let pendingConf1 = null;
-
-let totalScore2 = 0;
-let pendingPrediction2 = null;
-let pendingConf2 = null;
-
-let totalScore3 = 0;
-let pendingPrediction3 = null;
-let pendingConf3 = null;
-
-let totalScore4 = 0;
-let pendingPrediction4 = null;
-let pendingConf4 = null;
-
-let totalScore5 = 0;
-let pendingPrediction5 = null;
-let pendingConf5 = null;
-
 let gameHistoryRows = [];
 let lastTelegramUpdateId = 0;
 
@@ -55,11 +42,25 @@ const createStats = () => ({
     history20: []
 });
 
-let stats1 = createStats();
-let stats2 = createStats();
-let stats3 = createStats();
-let stats4 = createStats();
-let stats5 = createStats();
+// تعریف ۱۵ مدل (X1..X5 به همراه زیرشاخه های 1 و 2)
+const MODEL_KEYS = [
+    'X1', 'X11', 'X12',
+    'X2', 'X21', 'X22',
+    'X3', 'X31', 'X32',
+    'X4', 'X41', 'X42',
+    'X5', 'X51', 'X52'
+];
+
+const modelsState = {};
+MODEL_KEYS.forEach(key => {
+    modelsState[key] = {
+        stats: createStats(),
+        totalScore: 0,
+        pendingPrediction: null,
+        pendingConf: null,
+        lastPts: 0
+    };
+});
 
 const getFormattedDateTime = (includeIcon = true) => {
     const now = new Date();
@@ -272,21 +273,13 @@ const checkCustomException = (arr) => {
     return { status: 'wait' };
 };
 
+// فرمول های پایه X1 تا X5
 const predictFormula1 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 7) {
-        return { status: 'error', message: 'Array must contain at least 7 numbers.' };
-    }
-
+    if (!Array.isArray(arr) || arr.length < 7) return { status: 'error' };
     const last7 = arr.slice(-7);
     const [n7, n6, n5, n4, n3, n2, n1] = last7;
 
-    const k7 = safeLog(n7);
-    const k6 = safeLog(n6);
-    const k5 = safeLog(n5);
-    const k4 = safeLog(n4);
-    const k3 = safeLog(n3);
-    const k2 = safeLog(n2);
-    const k1 = safeLog(n1);
+    const k7 = safeLog(n7), k6 = safeLog(n6), k5 = safeLog(n5), k4 = safeLog(n4), k3 = safeLog(n3), k2 = safeLog(n2), k1 = safeLog(n1);
 
     const L5 = k7 + k5;
     const L4 = k6 + k4;
@@ -299,108 +292,61 @@ const predictFormula1 = (arr) => {
     const dir31 = L1 > L3 ? 'up' : 'dn';
 
     const patternKey = `${dir53}_${dir42}_${dir31}`;
-
     const decisionTable = {
-        'up_up_up': 'up',
-        'up_dn_up': 'dn',
-        'dn_up_dn': 'up',
-        'dn_dn_dn': 'dn',
-        'up_dn_dn': 'wait',
-        'up_up_dn': 'wait',
-        'dn_dn_up': 'wait',
-        'dn_up_up': 'wait'
+        'up_up_up': 'up', 'up_dn_up': 'dn', 'dn_up_dn': 'up', 'dn_dn_dn': 'dn',
+        'up_dn_dn': 'wait', 'up_up_dn': 'wait', 'dn_dn_up': 'wait', 'dn_up_up': 'wait'
     };
 
     const predictionDir = decisionTable[patternKey];
+    if (predictionDir === 'wait') return { status: 'wait' };
 
-    if (predictionDir === 'wait') {
-        return { status: 'wait' };
-    }
-
-    const step1 = Math.abs(L3 - L5);
-    const step2 = Math.abs(L2 - L4);
-    const step3 = Math.abs(L1 - L3);
-    const avgStep = (step1 + step2 + step3) / 3;
-
+    const avgStep = (Math.abs(L3 - L5) + Math.abs(L2 - L4) + Math.abs(L1 - L3)) / 3;
     let L0 = predictionDir === 'up' ? L2 + avgStep : L2 - avgStep;
     const k0 = L0 - k2;
     const rawN0 = safeExp(k0);
 
     let finalN0 = rawN0;
     let isWasNegative = false;
-
     if (rawN0 < 0) {
         finalN0 = Math.abs(rawN0) + 1.0;
         isWasNegative = true;
     }
 
-    return {
-        status: 'predict',
-        direction: predictionDir,
-        predictedValue: Number(finalN0.toFixed(2)),
-        wasNegative: isWasNegative
-    };
+    return { status: 'predict', direction: predictionDir, predictedValue: Number(finalN0.toFixed(2)), wasNegative: isWasNegative };
 };
 
 const predictFormula2 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 7) {
-        return { status: 'error', message: 'Array must contain at least 7 numbers.' };
-    }
-
+    if (!Array.isArray(arr) || arr.length < 7) return { status: 'error' };
     const last7 = arr.slice(-7);
     const [n7, n6, n5, n4, n3, n2, n1] = last7;
 
-    const k5 = safeLog(n5);
-    const k4 = safeLog(n4);
-    const k3 = safeLog(n3);
-    const k2 = safeLog(n2);
-    const k1 = safeLog(n1);
-
-    const L3 = k5 + k3;
-    const L2 = k4 + k2;
-    const L1 = k3 + k1;
+    const k5 = safeLog(n5), k4 = safeLog(n4), k3 = safeLog(n3), k2 = safeLog(n2), k1 = safeLog(n1);
+    const L3 = k5 + k3, L2 = k4 + k2, L1 = k3 + k1;
 
     let pctChange = 0;
-    if (Math.abs(L3) > 1e-9) {
-        pctChange = (L1 - L3) / Math.abs(L3);
-    }
+    if (Math.abs(L3) > 1e-9) pctChange = (L1 - L3) / Math.abs(L3);
 
     const predictionDir = pctChange >= 0 ? 'up' : 'dn';
     const L0 = L2 * (1 + pctChange);
-
     const k0 = L0 - k2;
     const rawN0 = safeExp(k0);
 
     let finalN0 = rawN0;
     let isWasNegative = false;
-
     if (rawN0 < 0) {
         finalN0 = Math.abs(rawN0) + 1.0;
         isWasNegative = true;
     }
 
-    return {
-        status: 'predict',
-        direction: predictionDir,
-        predictedValue: Number(finalN0.toFixed(2)),
-        wasNegative: isWasNegative
-    };
+    return { status: 'predict', direction: predictionDir, predictedValue: Number(finalN0.toFixed(2)), wasNegative: isWasNegative };
 };
 
 const predictFormula3 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 6) {
-        return { status: 'error', message: 'Array must contain at least 6 numbers.' };
-    }
+    if (!Array.isArray(arr) || arr.length < 6) return { status: 'error' };
 
     const len = arr.length;
-    const n1 = arr[len - 1];
-    const n2 = arr[len - 2];
-    const n3 = arr[len - 3];
-    const n4 = arr[len - 4];
-    const n6 = arr[len - 6];
-
+    const n1 = arr[len - 1], n2 = arr[len - 2], n3 = arr[len - 3], n4 = arr[len - 4], n6 = arr[len - 6];
     const triplet = [n6, n4, n2];
-
     const step1 = (n6 - 1.0) + (n4 - 1.0);
     const step2 = (n4 - 1.0) + (n2 - 1.0);
 
@@ -411,260 +357,127 @@ const predictFormula3 = (arr) => {
         predictionDir = 'dn';
         const decreaseRate = step1 !== 0 ? (step1 - step2) / step1 : 0;
         const raw = n2 * (1 - decreaseRate);
-
         const countUnder2 = triplet.filter(x => x < 2.0).length;
         const countBetween2And10 = triplet.filter(x => x >= 2.0 && x < 10.0).length;
         const countAbove10 = triplet.filter(x => x >= 10.0).length;
 
-        if (countUnder2 >= 2) {
-            result = raw + 1.0;
-        } else if (countBetween2And10 >= 2) {
-            result = raw * 10.0;
-        } else if (countAbove10 === 1 && countBetween2And10 === 1 && countUnder2 === 1) {
-            result = raw * 100.0;
-        } else if (countAbove10 >= 2) {
-            result = raw;
-        } else {
-            result = raw;
-        }
-    }
-    else if (n6 < n4 && n4 < n2) {
+        if (countUnder2 >= 2) result = raw + 1.0;
+        else if (countBetween2And10 >= 2) result = raw * 10.0;
+        else if (countAbove10 === 1 && countBetween2And10 === 1 && countUnder2 === 1) result = raw * 100.0;
+        else result = raw;
+    } else if (n6 < n4 && n4 < n2) {
         predictionDir = 'up';
         const growthRate = step1 !== 0 ? (step2 - step1) / step1 : 0;
         const effectiveGrowth = Math.sqrt(Math.max(0, growthRate));
-
-        const countUnder2 = triplet.filter(x => x < 2.0).length;
         const countBetween2And10 = triplet.filter(x => x >= 2.0 && x < 10.0).length;
 
-        if (n2 >= 10.0) {
-            result = n2 + (step2 - step1) / 2;
-        } else if (countBetween2And10 >= 2) {
-            result = n2 * (1 + growthRate / 2);
-        } else if (countUnder2 >= 2) {
-            result = n2 * (1 + effectiveGrowth);
-        } else {
-            result = n2 * (1 + effectiveGrowth);
-        }
+        if (n2 >= 10.0) result = n2 + (step2 - step1) / 2;
+        else if (countBetween2And10 >= 2) result = n2 * (1 + growthRate / 2);
+        else result = n2 * (1 + effectiveGrowth);
 
         const maxAllowed = n2 * 2.5;
-        if (result > maxAllowed) {
-            result = maxAllowed;
-        }
-    }
-    else if (n6 > n4 && n4 < n2) {
+        if (result > maxAllowed) result = maxAllowed;
+    } else if (n6 > n4 && n4 < n2) {
         predictionDir = 'up';
         const dropForce = n6 - n4;
         const scaleRatio = Math.sqrt(n2 / n6);
         const effectiveForce = dropForce * scaleRatio;
         const distToFloor = n2 - 1.0;
 
-        if (effectiveForce > distToFloor) {
-            const reboundExcess = effectiveForce - distToFloor;
-            result = 1.0 + reboundExcess;
-        } else {
-            result = n2 - effectiveForce;
-        }
-    }
-    else if (n6 < n4 && n4 > n2) {
+        if (effectiveForce > distToFloor) result = 1.0 + (effectiveForce - distToFloor);
+        else result = n2 - effectiveForce;
+    } else if (n6 < n4 && n4 > n2) {
         predictionDir = 'up';
         const riseForce = n4 + n6;
         const scaleRatio = Math.sqrt(n2 / n4);
-        const effectiveForce = riseForce * scaleRatio;
-
-        result = n2 + effectiveForce;
+        result = n2 + (riseForce * scaleRatio);
     }
 
     const lnN2 = Math.log(n2);
     if (lnN2 > 0) {
         const logCheck = (Math.log(n1) * Math.log(n3)) / lnN2;
-
-        if (n2 < 2.0 && result > n2) {
-            if (logCheck <= n2) {
-                result = logCheck;
-            }
-        }
-
-        if (result > 8.0) {
-            result = logCheck;
-        }
+        if (n2 < 2.0 && result > n2 && logCheck <= n2) result = logCheck;
+        if (result > 8.0) result = logCheck;
     }
 
-    if (result < 1.0) {
-        result = 1.0;
-    }
+    if (result < 1.0) result = 1.0;
 
+    return { status: 'predict', direction: predictionDir, predictedValue: Number(result.toFixed(2)), wasNegative: false };
+};
+
+const predictFormula4 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 5) return { status: 'error' };
+    const last5 = arr.slice(-5);
+    const weights = [0.1, 0.15, 0.2, 0.25, 0.3];
+    let weightedLog = 0;
+    for (let i = 0; i < 5; i++) {
+        weightedLog += safeLog(last5[i]) * weights[i];
+    }
+    const momentum = safeLog(last5[4]) - safeLog(last5[2]);
+    const targetLog = weightedLog + momentum * 0.5;
+    const rawVal = safeExp(targetLog);
+    const finalVal = Math.max(1.01, rawVal < 0 ? Math.abs(rawVal) + 1.0 : rawVal);
     return {
         status: 'predict',
-        direction: predictionDir,
-        predictedValue: Number(result.toFixed(2)),
+        direction: finalVal >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(finalVal.toFixed(2)),
         wasNegative: false
     };
 };
 
-const predictFormula4 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 3) {
-        return { status: 'wait' };
-    }
-
-    const len = arr.length;
-    const n3 = parseFloat(arr[len - 3]);
-    const n2 = parseFloat(arr[len - 2]);
-    const n1 = parseFloat(arr[len - 1]);
-
-    if (isNaN(n1) || isNaN(n2) || isNaN(n3)) {
-        return { status: 'wait' };
-    }
-
-    if (n1 >= 20.0) {
-        return {
-            status: 'predict',
-            direction: 'dn',
-            predictedValue: 1.50,
-            wasNegative: false
-        };
-    }
-
-    if (n1 < 2.00 && n2 < 2.00) {
-        if (n1 <= 1.30 && n2 <= 1.30) {
-            return {
-                status: 'predict',
-                direction: 'up',
-                predictedValue: 2.00,
-                wasNegative: false
-            };
-        }
-        if (n3 < 2.00) {
-            return {
-                status: 'predict',
-                direction: 'dn',
-                predictedValue: 1.50,
-                wasNegative: false
-            };
-        }
-    }
-
-    if (n3 < 2.00 && n2 >= 2.00 && n1 < 2.00) {
-        return {
-            status: 'predict',
-            direction: 'up',
-            predictedValue: 2.00,
-            wasNegative: false
-        };
-    }
-
-    if (n3 >= 2.00 && n2 < 2.00 && n1 >= 2.00) {
-        return {
-            status: 'predict',
-            direction: 'dn',
-            predictedValue: 1.50,
-            wasNegative: false
-        };
-    }
-
-    if (n1 >= 2.00 && n2 >= 2.00 && n3 >= 2.00) {
-        const d1 = Math.log(n1);
-        const d2 = Math.log(n2);
-        const d3 = Math.log(n3);
-        let cashout = 2.00;
-
-        if (d2 !== 0) {
-            const power = (d1 * d3) / d2;
-            if (power < 10) {
-                const predicted = Math.exp(power);
-                cashout = predicted >= 3.0 ? Math.min(Math.floor(predicted), 5.0) : 2.00;
-            }
-        }
-        return {
-            status: 'predict',
-            direction: 'up',
-            predictedValue: Number(cashout.toFixed(2)),
-            wasNegative: false
-        };
-    }
-
-    const isMonotonic = (n2 > Math.min(n1, n3)) && (n2 < Math.max(n1, n3));
-    if (isMonotonic) {
-        const d1 = Math.log(n1);
-        const d2 = Math.log(n2);
-        const d3 = Math.log(n3);
-
-        if (d2 !== 0) {
-            const power = (d1 * d3) / d2;
-
-            if (power < 0.693) {
-                const predictedVal = Math.exp(power);
-                return {
-                    status: 'predict',
-                    direction: 'dn',
-                    predictedValue: Number(predictedVal.toFixed(2)),
-                    wasNegative: false
-                };
-            } else if (power < 10) {
-                const predicted = Math.exp(power);
-                const cashout = predicted >= 10.0 ? 10.0 : Math.floor(predicted);
-                return {
-                    status: 'predict',
-                    direction: 'up',
-                    predictedValue: Number(cashout.toFixed(2)),
-                    wasNegative: false
-                };
-            }
-        }
-    }
-
-    return { status: 'wait' };
+const predictFormula5 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 5) return { status: 'error' };
+    const [n5, n4, n3, n2, n1] = arr.slice(-5);
+    const ratio1 = n1 / Math.max(0.1, n2);
+    const ratio2 = n3 / Math.max(0.1, n4);
+    const avgRatio = (ratio1 + ratio2) / 2;
+    let target = n1 * avgRatio;
+    if (target > 50) target = 50;
+    if (target < 1.0) target = 1.01;
+    return {
+        status: 'predict',
+        direction: target >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(target.toFixed(2)),
+        wasNegative: false
+    };
 };
 
-const predictFormula5 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 6) {
-        return { status: 'x' };
+// سازنده فرمول‌های فرعی 1 و 2 با فیلتر شروط n1, n2, n3 و n2, n4
+const applySubRule1 = (basePrediction, arr) => {
+    if (!basePrediction || basePrediction.status !== 'predict' || arr.length < 3) {
+        return { status: 'wait' };
     }
-
     const len = arr.length;
-    const n6 = parseFloat(arr[len - 6]);
-    const n4 = parseFloat(arr[len - 4]);
-    const n3 = parseFloat(arr[len - 3]);
-    const n2 = parseFloat(arr[len - 2]);
-    const n1 = parseFloat(arr[len - 1]);
+    const n1 = arr[len - 1];
+    const n2 = arr[len - 2];
+    const n3 = arr[len - 3];
+    const val = basePrediction.predictedValue;
 
-    if (isNaN(n1) || isNaN(n2) || isNaN(n3) || isNaN(n4) || isNaN(n6)) {
-        return { status: 'x' };
+    if (val >= 2.0) {
+        if (n1 >= 2.0 || n2 >= 2.0 || n3 >= 2.0) return { ...basePrediction };
+        return { status: 'wait' };
+    } else {
+        if (n1 < 2.0 || n2 < 2.0 || n3 < 2.0) return { ...basePrediction };
+        return { status: 'wait' };
     }
+};
 
-    const k3 = safeLog(n3);
-    const k2 = safeLog(n2);
-    const k1 = safeLog(n1);
-
-    if (Math.abs(k2) < 1e-9) {
-        return { status: 'x' };
+const applySubRule2 = (basePrediction, arr) => {
+    if (!basePrediction || basePrediction.status !== 'predict' || arr.length < 4) {
+        return { status: 'wait' };
     }
+    const len = arr.length;
+    const n2 = arr[len - 2];
+    const n4 = arr[len - 4];
+    const val = basePrediction.predictedValue;
 
-    const k0 = (k3 * k1) / k2;
-    let rawN0 = safeExp(k0);
-    let finalN0 = rawN0 < 0 ? Math.abs(rawN0) + 1.0 : rawN0;
-    finalN0 = Number(finalN0.toFixed(2));
-
-    const isOver2 = finalN0 >= 2.0;
-    const n4Over2 = n4 >= 2.0;
-    const n6Over2 = n6 >= 2.0;
-
-    if (isOver2 && (n4Over2 || n6Over2)) {
-        return {
-            status: 'predict',
-            direction: 'up',
-            predictedValue: finalN0,
-            wasNegative: false
-        };
-    } else if (!isOver2 && (!n4Over2 || !n6Over2)) {
-        return {
-            status: 'predict',
-            direction: 'dn',
-            predictedValue: finalN0,
-            wasNegative: false
-        };
+    if (val >= 2.0) {
+        if (n2 >= 2.0 || n4 >= 2.0) return { ...basePrediction };
+        return { status: 'wait' };
+    } else {
+        if (n2 < 2.0 || n4 < 2.0) return { ...basePrediction };
+        return { status: 'wait' };
     }
-
-    return { status: 'x' };
 };
 
 const sendTelegramMessage = async (chatId, messageHtml) => {
@@ -703,7 +516,6 @@ const sendTelegramDocument = async (chatId, filePath, caption = "") => {
             method: 'POST',
             body: formData
         });
-        console.log(`[TELEGRAM LOG] Sent ${path.basename(filePath)} successfully to ${chatId}`);
     } catch (error) {
         console.error(`[TELEGRAM SEND DOC ERROR -> ${chatId}]`, error);
     }
@@ -711,8 +523,8 @@ const sendTelegramDocument = async (chatId, filePath, caption = "") => {
 
 const generateStructuredLogFile = () => {
     const timeText = getFormattedDateTime(false);
-    let output = `VIP II Report | Date: ${timeText}\n\n`;
-    output += `Game ID  | Predicted | Actual |  %  | Point | X\n`;
+    let output = `VIP II & VIP 4 Full Report | Date: ${timeText}\n\n`;
+    output += `Game ID  | Predicted | Actual |  %  | Point | Model\n`;
 
     gameHistoryRows.forEach(row => {
         const cGame = `#${row.gameId}`.padEnd(9, ' ');
@@ -730,15 +542,14 @@ const generateStructuredLogFile = () => {
         output += `${cGame}| ${cPred}| ${cAct}| ${cConf}| ${cPts}| ${cX}\n`;
     });
 
-    const fmtU2 = (s) => `${s.under2.count}(${s.under2.negPoints} / ${s.under2.posPoints >= 0 ? '+' : ''}${s.under2.posPoints})`;
-    const fmtO2 = (s) => `${s.over2.count}(${s.over2.negPoints} / ${s.over2.posPoints >= 0 ? '+' : ''}${s.over2.posPoints})`;
-    const fmtO10 = (s) => `${s.over10.count}(${s.over10.negPoints} / zero(${s.over10.zeroCount}) / ${s.over10.posPoints >= 0 ? '+' : ''}${s.over10.posPoints})`;
-
-    output += `\n`;
-    output += `         X1     |      X2      |     X3      |     X4      |     X5\n`;
-    output += `-2: ${fmtU2(stats1)},  ${fmtU2(stats2)},  ${fmtU2(stats3)},  ${fmtU2(stats4)},  ${fmtU2(stats5)}\n`;
-    output += `+2: ${fmtO2(stats1)},  ${fmtO2(stats2)},  ${fmtO2(stats3)},  ${fmtO2(stats4)},  ${fmtO2(stats5)}\n`;
-    output += `+10: ${fmtO10(stats1)},  ${fmtO10(stats2)},  ${fmtO10(stats3)},  ${fmtO10(stats4)},  ${fmtO10(stats5)}\n`;
+    output += `\n================== SUMMARY STATS ==================\n`;
+    MODEL_KEYS.forEach(k => {
+        const s = modelsState[k].stats;
+        const u2 = `${s.under2.count}(${s.under2.negPoints}/${s.under2.posPoints >= 0 ? '+' : ''}${s.under2.posPoints})`;
+        const o2 = `${s.over2.count}(${s.over2.negPoints}/${s.over2.posPoints >= 0 ? '+' : ''}${s.over2.posPoints})`;
+        const o10 = `${s.over10.count}(${s.over10.negPoints}/zero(${s.over10.zeroCount})/${s.over10.posPoints >= 0 ? '+' : ''}${s.over10.posPoints})`;
+        output += `${k.padEnd(4)} -> -2: ${u2} | +2: ${o2} | +10: ${o10} | Total: ${s.totalPredictions}\n`;
+    });
 
     fs.writeFileSync(VIP2_LOG_FILE, output, 'utf8');
 };
@@ -754,7 +565,6 @@ const checkTelegramCommands = async () => {
         if (data.ok && Array.isArray(data.result)) {
             for (const update of data.result) {
                 lastTelegramUpdateId = update.update_id;
-
                 const msg = update.message || update.channel_post;
                 if (!msg || !msg.text) continue;
 
@@ -762,24 +572,20 @@ const checkTelegramCommands = async () => {
                 const senderChatId = msg.chat.id;
 
                 if (text === '/report' || text === '/file' || text === '/log') {
-                    console.log(`[TELEGRAM COMMAND] Executing ${text} request for chat ${senderChatId}`);
                     generateStructuredLogFile();
                     await sendTelegramDocument(
                         senderChatId,
                         VIP2_LOG_FILE,
-                        `📁 <b>VIP II Log Report</b>\n<b>Games Evaluated:</b> ${totalEvaluatedGamesCount}\n<b>Time:</b> ${getFormattedDateTime(false)}`
+                        `📁 <b>VIP Log Report</b>\n<b>Games:</b> ${totalEvaluatedGamesCount}\n<b>Time:</b> ${getFormattedDateTime(false)}`
                     );
                 }
             }
         }
-    } catch (error) {
-        // Silently skip update poll errors
-    }
+    } catch (error) {}
 };
 
 const sendVipWarningAlert = async (warningMsg) => {
     if (!ENABLE_TELEGRAM) return;
-
     if (warningMsg === lastSentVipWarning) return;
     lastSentVipWarning = warningMsg;
 
@@ -806,24 +612,17 @@ const formatColoredNum = (num) => {
     return `🟡 ${num}`;
 };
 
-const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) => {
+const formatNextLine = (prediction, arr, isWinnerInConflict = false, isLoserInConflict = false) => {
     if (!prediction || prediction.status === 'wait') {
         return "wait ⚪";
-    }
-    if (prediction.status === 'x') {
-        return "x ⚪";
     }
     const val = prediction.predictedValue;
     const displayVal = val >= 1000 ? "+1000" : val;
     let note = prediction.wasNegative ? " (Negative)" : "";
 
     let baseConf = calculateConfidence(val, arr) || 50;
-
-    if (isWinnerInConflict) {
-        baseConf = Math.max(52, Math.min(98, baseConf));
-    } else if (isLoserInConflict) {
-        baseConf = Math.min(48, Math.max(5, baseConf));
-    }
+    if (isWinnerInConflict) baseConf = Math.max(52, Math.min(98, baseConf));
+    else if (isLoserInConflict) baseConf = Math.min(48, Math.max(5, baseConf));
 
     const factor = Math.max(0.2, baseConf / 100);
 
@@ -840,11 +639,12 @@ const formatNextLine = (prediction, arr, isWinnerInConflict, isLoserInConflict) 
     }
 };
 
-const formatCustomLine = (customPred) => {
-    if (!customPred || customPred.status === 'wait') {
-        return "wait ⚪";
-    }
-    return `+10.00 🟡 [${customPred.ruleName}]`;
+const getPredictionIcon = (pred) => {
+    if (!pred || pred.status === 'wait') return "⚪";
+    const v = pred.predictedValue;
+    if (v < 2.0) return "🔴";
+    if (v < 10.0) return "🟢";
+    return "🟡";
 };
 
 const formatSystemBlockVip1 = (sysName, stats, lastPts, totalScore) => {
@@ -889,325 +689,200 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     return str;
 };
 
-const formatSystemBlockConsole = (sysName, stats, lastPts, totalScore) => {
-    const ptsSign = lastPts >= 0 ? `+${lastPts}` : `${lastPts}`;
-    const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
-
-    const negTot = stats.totalNegPoints;
-    const posTot = stats.totalPosPoints >= 0 ? `+${stats.totalPosPoints}` : `${stats.totalPosPoints}`;
-
-    const u2Neg = stats.under2.negPoints;
-    const u2Pos = stats.under2.posPoints >= 0 ? `+${stats.under2.posPoints}` : `${stats.under2.posPoints}`;
-
-    const o2Neg = stats.over2.negPoints;
-    const o2Pos = stats.over2.posPoints >= 0 ? `+${stats.over2.posPoints}` : `${stats.over2.posPoints}`;
-
-    const o10Neg = stats.over10.negPoints;
-    const o10Zero = stats.over10.zeroCount;
-    const o10Pos = stats.over10.posPoints >= 0 ? `+${stats.over10.posPoints}` : `${stats.over10.posPoints}`;
-
-    let neg20 = 0;
-    let pos20 = 0;
-    stats.history20.forEach(p => {
-        if (p < 0) neg20 += p;
-        if (p > 0) pos20 += p;
-    });
-    const pos20Str = pos20 >= 0 ? `+${pos20}` : `${pos20}`;
-
-    let str = `${sysName}: Total: ${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}\n`;
-    str += `Last 20 (${neg20} / ${pos20Str})\n`;
-    str += `- 2: ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
-    str += `+2: ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
-    str += `+10: ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})`;
-
-    return str;
-};
-
 const processAndSendPrediction = async (results, gameId) => {
     const actualValue = results[results.length - 1];
     const timeStrWithIcon = getFormattedDateTime(true);
 
     totalEvaluatedGamesCount++;
 
-    // Evaluate X1
-    let pts1 = 0;
-    let predVal1 = "wait";
-    if (pendingPrediction1 !== null && pendingPrediction1.status === 'predict') {
-        predVal1 = pendingPrediction1.predictedValue;
-        pts1 = calculatePoints(predVal1, actualValue);
-        totalScore1 += pts1;
-        updateStats(stats1, predVal1, actualValue, pts1);
-    }
-    gameHistoryRows.push({
-        gameId,
-        pred: predVal1,
-        actual: actualValue,
-        conf: pendingConf1 !== null ? pendingConf1 : '-',
-        pts: pts1,
-        x: 'X1'
-    });
-
-    // Evaluate X2
-    let pts2 = 0;
-    let predVal2 = "wait";
-    if (pendingPrediction2 !== null && pendingPrediction2.status === 'predict') {
-        predVal2 = pendingPrediction2.predictedValue;
-        pts2 = calculatePoints(predVal2, actualValue);
-        totalScore2 += pts2;
-        updateStats(stats2, predVal2, actualValue, pts2);
-    }
-    gameHistoryRows.push({
-        gameId,
-        pred: predVal2,
-        actual: actualValue,
-        conf: pendingConf2 !== null ? pendingConf2 : '-',
-        pts: pts2,
-        x: 'X2'
-    });
-
-    // Evaluate X3
-    let pts3 = 0;
-    let predVal3 = "wait";
-    if (pendingPrediction3 !== null && pendingPrediction3.status === 'predict') {
-        predVal3 = pendingPrediction3.predictedValue;
-        pts3 = calculatePoints(predVal3, actualValue);
-        totalScore3 += pts3;
-        updateStats(stats3, predVal3, actualValue, pts3);
-    }
-    gameHistoryRows.push({
-        gameId,
-        pred: predVal3,
-        actual: actualValue,
-        conf: pendingConf3 !== null ? pendingConf3 : '-',
-        pts: pts3,
-        x: 'X3'
-    });
-
-    // Evaluate X4
-    let pts4 = 0;
-    let predVal4 = "wait";
-    if (pendingPrediction4 !== null && pendingPrediction4.status === 'predict') {
-        predVal4 = pendingPrediction4.predictedValue;
-        pts4 = calculatePoints(predVal4, actualValue);
-        totalScore4 += pts4;
-        updateStats(stats4, predVal4, actualValue, pts4);
-    }
-    gameHistoryRows.push({
-        gameId,
-        pred: predVal4,
-        actual: actualValue,
-        conf: pendingConf4 !== null ? pendingConf4 : '-',
-        pts: pts4,
-        x: 'X4'
-    });
-
-    // Evaluate X5
-    let pts5 = 0;
-    let predVal5 = "wait";
-    if (pendingPrediction5 !== null) {
-        if (pendingPrediction5.status === 'predict') {
-            predVal5 = pendingPrediction5.predictedValue;
-            pts5 = calculatePoints(predVal5, actualValue);
-            totalScore5 += pts5;
-            updateStats(stats5, predVal5, actualValue, pts5);
-        } else if (pendingPrediction5.status === 'x') {
-            predVal5 = "x";
+    // ارزیابی تمامی مدل‌ها و ثبت تاریخچه
+    MODEL_KEYS.forEach(key => {
+        const m = modelsState[key];
+        let pts = 0;
+        let predVal = "wait";
+        if (m.pendingPrediction !== null && m.pendingPrediction.status === 'predict') {
+            predVal = m.pendingPrediction.predictedValue;
+            pts = calculatePoints(predVal, actualValue);
+            m.totalScore += pts;
+            updateStats(m.stats, predVal, actualValue, pts);
         }
-    }
-    gameHistoryRows.push({
-        gameId,
-        pred: predVal5,
-        actual: actualValue,
-        conf: pendingConf5 !== null ? pendingConf5 : '-',
-        pts: pts5,
-        x: 'X5'
+        m.lastPts = pts;
+
+        gameHistoryRows.push({
+            gameId,
+            pred: predVal,
+            actual: actualValue,
+            conf: m.pendingConf !== null ? m.pendingConf : '-',
+            pts: pts,
+            x: key
+        });
     });
 
-    // Limit memory footprint: keep latest 3000 rows
-    if (gameHistoryRows.length > 3000) {
-        gameHistoryRows = gameHistoryRows.slice(-3000);
+    if (gameHistoryRows.length > 5000) {
+        gameHistoryRows = gameHistoryRows.slice(-5000);
     }
 
-    // Save formatted txt file to disk
-    generateStructuredLogFile();
+    // تولید پیش‌بینی‌های جدید
+    const p1 = predictFormula1(results);
+    const p2 = predictFormula2(results);
+    const p3 = predictFormula3(results);
+    const p4 = predictFormula4(results);
+    const p5 = predictFormula5(results);
 
-    const nextPrediction1 = predictFormula1(results);
-    const nextPrediction2 = predictFormula2(results);
-    const nextPrediction3 = predictFormula3(results);
-    const nextPrediction4 = predictFormula4(results);
-    const nextPrediction5 = predictFormula5(results);
-    const nextCustomPrediction = checkCustomException(results);
+    const nextPredictions = {
+        'X1': p1,
+        'X11': applySubRule1(p1, results),
+        'X12': applySubRule2(p1, results),
 
-    if (nextPrediction1 && nextPrediction1.status === 'predict') stats1.totalPredictions++;
-    if (nextPrediction2 && nextPrediction2.status === 'predict') stats2.totalPredictions++;
-    if (nextPrediction3 && nextPrediction3.status === 'predict') stats3.totalPredictions++;
-    if (nextPrediction4 && nextPrediction4.status === 'predict') stats4.totalPredictions++;
-    if (nextPrediction5 && nextPrediction5.status === 'predict') stats5.totalPredictions++;
+        'X2': p2,
+        'X21': applySubRule1(p2, results),
+        'X22': applySubRule2(p2, results),
 
-    const f1Active = nextPrediction1 && nextPrediction1.status === 'predict';
-    const f2Active = nextPrediction2 && nextPrediction2.status === 'predict';
+        'X3': p3,
+        'X31': applySubRule1(p3, results),
+        'X32': applySubRule2(p3, results),
 
-    let f1WinnerInConflict = false;
-    let f1LoserInConflict = false;
-    let f2WinnerInConflict = false;
-    let f2LoserInConflict = false;
+        'X4': p4,
+        'X41': applySubRule1(p4, results),
+        'X42': applySubRule2(p4, results),
+
+        'X5': p5,
+        'X51': applySubRule1(p5, results),
+        'X52': applySubRule2(p5, results)
+    };
+
+    // بروزرسانی تعداد کل پیش بینی های هر مدل
+    MODEL_KEYS.forEach(k => {
+        if (nextPredictions[k] && nextPredictions[k].status === 'predict') {
+            modelsState[k].stats.totalPredictions++;
+        }
+    });
+
+    // مدیریت تعارض‌های اختصاصی برای X1 و X2 جهت گزارش در VIP I و VIP II
+    const f1Active = p1 && p1.status === 'predict';
+    const f2Active = p2 && p2.status === 'predict';
+    let f1WinnerInConflict = false, f1LoserInConflict = false;
+    let f2WinnerInConflict = false, f2LoserInConflict = false;
 
     if (f1Active && f2Active) {
-        const f1Over2 = nextPrediction1.predictedValue >= 2.0;
-        const f2Over2 = nextPrediction2.predictedValue >= 2.0;
-
+        const f1Over2 = p1.predictedValue >= 2.0;
+        const f2Over2 = p2.predictedValue >= 2.0;
         if (f1Over2 !== f2Over2) {
             const nConf = getNConfValue(results);
             const confOver2 = nConf >= 2.0;
-
-            const f1Matches = f1Over2 === confOver2;
-            const f2Matches = f2Over2 === confOver2;
-
-            if (f1Matches && !f2Matches) {
-                f1WinnerInConflict = true;
-                f2LoserInConflict = true;
-            } else if (f2Matches && !f1Matches) {
-                f2WinnerInConflict = true;
-                f1LoserInConflict = true;
+            if (f1Over2 === confOver2 && f2Over2 !== confOver2) {
+                f1WinnerInConflict = true; f2LoserInConflict = true;
+            } else if (f2Over2 === confOver2 && f1Over2 !== confOver2) {
+                f2WinnerInConflict = true; f1LoserInConflict = true;
             } else {
-                const c1 = calculateConfidence(nextPrediction1.predictedValue, results);
-                const c2 = calculateConfidence(nextPrediction2.predictedValue, results);
-                if (c1 >= c2) {
-                    f1WinnerInConflict = true;
-                    f2LoserInConflict = true;
-                } else {
-                    f2WinnerInConflict = true;
-                    f1LoserInConflict = true;
-                }
+                const c1 = calculateConfidence(p1.predictedValue, results);
+                const c2 = calculateConfidence(p2.predictedValue, results);
+                if (c1 >= c2) { f1WinnerInConflict = true; f2LoserInConflict = true; }
+                else { f2WinnerInConflict = true; f1LoserInConflict = true; }
             }
         }
     }
 
-    const conf1 = f1Active ? calculateConfidence(nextPrediction1.predictedValue, results) : null;
-    const conf2 = f2Active ? calculateConfidence(nextPrediction2.predictedValue, results) : null;
-    const conf3 = (nextPrediction3 && nextPrediction3.status === 'predict') ? calculateConfidence(nextPrediction3.predictedValue, results) : null;
-    const conf4 = (nextPrediction4 && nextPrediction4.status === 'predict') ? calculateConfidence(nextPrediction4.predictedValue, results) : null;
-    const conf5 = (nextPrediction5 && nextPrediction5.status === 'predict') ? calculateConfidence(nextPrediction5.predictedValue, results) : null;
-
-    const f1Over2 = f1Active ? nextPrediction1.predictedValue >= 2.0 : false;
-    const f2Over2 = f2Active ? nextPrediction2.predictedValue >= 2.0 : false;
-    const isGoodSignal = f1Active && f2Active && (f1Over2 === f2Over2) && (conf1 || 0) > 30 && (conf2 || 0) > 30;
+    const conf1 = f1Active ? calculateConfidence(p1.predictedValue, results) : null;
+    const conf2 = f2Active ? calculateConfidence(p2.predictedValue, results) : null;
+    const isGoodSignal = f1Active && f2Active && ((p1.predictedValue >= 2.0) === (p2.predictedValue >= 2.0)) && (conf1 || 0) > 30 && (conf2 || 0) > 30;
 
     const last4 = results.slice(-4);
     const last4Formatted = last4.map(num => formatColoredNum(num)).join('  ');
 
+    generateStructuredLogFile();
+
     const telegramPromises = [];
 
-    // 1. Periodic 50-game Task
-    if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
-        let periodicReportMessage = `<b>👑👑 VIP II </b>\n`;
-        periodicReportMessage += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
-        periodicReportMessage += `${last4Formatted}\n`;
-        periodicReportMessage += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
-
-        periodicReportMessage += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
-        periodicReportMessage += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
-        periodicReportMessage += formatSystemBlockVip2("X3", stats3, pts3, totalScore3) + "\n";
-        periodicReportMessage += formatSystemBlockVip2("X4", stats4, pts4, totalScore4) + "\n";
-        periodicReportMessage += formatSystemBlockVip2("X5", stats5, pts5, totalScore5);
-
-        telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, periodicReportMessage));
-
-        telegramPromises.push(sendTelegramDocument(
-            TELEGRAM_LOG_CHAT_ID,
-            VIP2_LOG_FILE,
-            `📊 <b>VIP II Formatted Backup</b>\n<b>Game ID:</b> #${gameId}\n<b>Total Predictions:</b> ${totalEvaluatedGamesCount}`
-        ));
-    }
-
-    // 2. Standard VIP I Message
+    // 1. VIP I
     let vip1Status = isGoodSignal ? "Good" : "Normal";
     let vip1Message = `<b>👑 VIP I </b>\n`;
     vip1Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
     vip1Message += `${last4Formatted}\n`;
     vip1Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
-
-    vip1Message += formatSystemBlockVip1("X1", stats1, pts1, totalScore1) + "\n";
-    vip1Message += formatSystemBlockVip1("X2", stats2, pts2, totalScore2) + "\n\n";
-
-    vip1Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-    vip1Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
+    vip1Message += formatSystemBlockVip1("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
+    vip1Message += formatSystemBlockVip1("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n\n";
+    vip1Message += `<b>Next X1:</b>  ${formatNextLine(p1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
+    vip1Message += `<b>Next X2:</b>  ${formatNextLine(p2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
     vip1Message += `<b>Prediction status:</b>  ${vip1Status}`;
-
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message));
 
-    // 3. Standard VIP II Message
+    // 2. VIP II
     let vip2Message = `<b>👑👑 VIP II </b>\n`;
     vip2Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last4Formatted}\n`;
     vip2Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
-
-    vip2Message += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
-    vip2Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
-    vip2Message += formatSystemBlockVip2("X3", stats3, pts3, totalScore3) + "\n";
-    vip2Message += formatSystemBlockVip2("X4", stats4, pts4, totalScore4) + "\n";
-    vip2Message += formatSystemBlockVip2("X5", stats5, pts5, totalScore5) + "\n";
-
-    vip2Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-    vip2Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
-    vip2Message += `<b>Next X3:</b>  ${formatNextLine(nextPrediction3, results, false, false)}\n`;
-    vip2Message += `<b>Next X4:</b>  ${formatNextLine(nextPrediction4, results, false, false)}\n`;
-    vip2Message += `<b>Next X5:</b>  ${formatNextLine(nextPrediction5, results, false, false)}`;
-
+    vip2Message += formatSystemBlockVip2("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X3", modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
+    vip2Message += `<b>Next X1:</b>  ${formatNextLine(p1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
+    vip2Message += `<b>Next X2:</b>  ${formatNextLine(p2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
+    vip2Message += `<b>Next X3:</b>  ${formatNextLine(p3, results, false, false)}`;
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // 4. VIP 4 Condition
-    if (isGoodSignal) {
-        let vip4Message = `<b>👑👑👑👑 VIP 4 </b>\n`;
-        vip4Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
-        vip4Message += `${last4Formatted}\n`;
-        vip4Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
+    // 3. VIP 4 (ساختار جدید)
+    const isVip4Periodic = totalEvaluatedGamesCount > 0 && (totalEvaluatedGamesCount % 25 === 0);
 
-        vip4Message += formatSystemBlockVip2("X1", stats1, pts1, totalScore1) + "\n";
-        vip4Message += formatSystemBlockVip2("X2", stats2, pts2, totalScore2) + "\n";
+    if (isVip4Periodic) {
+        // گزارش کامل هر ۲۵ دست یکبار برای تمام مدل‌ها
+        let vip4FullMessage = `👑👑 VIP II \n`;
+        vip4FullMessage += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
+        vip4FullMessage += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
 
-        vip4Message += `<b>Next X1:</b>  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-        vip4Message += `<b>Next X2:</b>  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}`;
+        for (let i = 1; i <= 5; i++) {
+            const kBase = `X${i}`;
+            const k1 = `X${i}1`;
+            const k2 = `X${i}2`;
 
-        telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip4Message));
+            vip4FullMessage += formatSystemBlockVip2(kBase, modelsState[kBase].stats, modelsState[kBase].lastPts, modelsState[kBase].totalScore);
+            vip4FullMessage += formatSystemBlockVip2(k1, modelsState[k1].stats, modelsState[k1].lastPts, modelsState[k1].totalScore);
+            vip4FullMessage += formatSystemBlockVip2(k2, modelsState[k2].stats, modelsState[k2].lastPts, modelsState[k2].totalScore);
+            if (i < 5) vip4FullMessage += "\n";
+        }
+        telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip4FullMessage));
+    } else {
+        // گزارش استاندارد هر دست VIP 4
+        let vip4NormalMessage = `👑👑 VIP II \n`;
+        vip4NormalMessage += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
+        vip4NormalMessage += `${last4Formatted}\n`;
+        vip4NormalMessage += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
+
+        for (let i = 1; i <= 5; i++) {
+            const kBase = `X${i}`;
+            const k1 = `X${i}1`;
+            const k2 = `X${i}2`;
+
+            vip4NormalMessage += formatSystemBlockVip1(kBase, modelsState[kBase].stats, modelsState[kBase].lastPts, modelsState[kBase].totalScore) + "\n";
+            vip4NormalMessage += `  ` + formatSystemBlockVip1(k1, modelsState[k1].stats, modelsState[k1].lastPts, modelsState[k1].totalScore) + "\n";
+            vip4NormalMessage += `  ` + formatSystemBlockVip1(k2, modelsState[k2].stats, modelsState[k2].lastPts, modelsState[k2].totalScore) + "\n\n";
+        }
+
+        for (let i = 1; i <= 5; i++) {
+            const iconBase = getPredictionIcon(nextPredictions[`X${i}`]);
+            const icon1 = getPredictionIcon(nextPredictions[`X${i}1`]);
+            const icon2 = getPredictionIcon(nextPredictions[`X${i}2`]);
+            vip4NormalMessage += `Next X${i}, X${i}1, X${i}2:  ${iconBase} ${icon1} ${icon2}\n`;
+        }
+
+        telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip4NormalMessage));
     }
 
-    let consoleReport = `==================================================\n`;
-    consoleReport += `👑 VIP II REPORT (CONSOLE) 👑\n`;
-    consoleReport += `Game ID: #${gameId} | ${timeStrWithIcon} | Actual Result: ${actualValue}\n`;
-    consoleReport += `Last 4 Results: ${last4.join(' | ')}\n`;
-    consoleReport += `Total Predictions: ${totalEvaluatedGamesCount}\n`;
-    consoleReport += `--------------------------------------------------\n`;
-    consoleReport += formatSystemBlockConsole("X1", stats1, pts1, totalScore1) + "\n\n";
-    consoleReport += formatSystemBlockConsole("X2", stats2, pts2, totalScore2) + "\n\n";
-    consoleReport += formatSystemBlockConsole("X3", stats3, pts3, totalScore3) + "\n\n";
-    consoleReport += formatSystemBlockConsole("X4", stats4, pts4, totalScore4) + "\n\n";
-    consoleReport += formatSystemBlockConsole("X5", stats5, pts5, totalScore5) + "\n";
-    consoleReport += `--------------------------------------------------\n`;
-    consoleReport += `Next X1:  ${formatNextLine(nextPrediction1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-    consoleReport += `Next X2:  ${formatNextLine(nextPrediction2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
-    consoleReport += `Next X3:  ${formatNextLine(nextPrediction3, results, false, false)}\n`;
-    consoleReport += `Next X4:  ${formatNextLine(nextPrediction4, results, false, false)}\n`;
-    consoleReport += `Next X5:  ${formatNextLine(nextPrediction5, results, false, false)}\n`;
-    consoleReport += `Next Custom: ${formatCustomLine(nextCustomPrediction)}\n`;
-    consoleReport += `==================================================`;
+    // 4. ارسال دوره‌ای فایل لاگ به TELEGRAM_LOG_CHAT_ID
+    if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
+        telegramPromises.push(sendTelegramDocument(
+            TELEGRAM_LOG_CHAT_ID,
+            VIP2_LOG_FILE,
+            `📊 <b>Full Systems Log Report</b>\n<b>Game ID:</b> #${gameId}\n<b>Total Predictions:</b> ${totalEvaluatedGamesCount}`
+        ));
+    }
 
-    console.log(consoleReport);
-
-    pendingPrediction1 = nextPrediction1;
-    pendingConf1 = conf1;
-
-    pendingPrediction2 = nextPrediction2;
-    pendingConf2 = conf2;
-
-    pendingPrediction3 = nextPrediction3;
-    pendingConf3 = conf3;
-
-    pendingPrediction4 = nextPrediction4;
-    pendingConf4 = conf4;
-
-    pendingPrediction5 = nextPrediction5;
-    pendingConf5 = conf5;
+    // بروزرسانی پیش‌بینی‌های در انتظار
+    MODEL_KEYS.forEach(key => {
+        modelsState[key].pendingPrediction = nextPredictions[key];
+        modelsState[key].pendingConf = (nextPredictions[key] && nextPredictions[key].status === 'predict') 
+            ? calculateConfidence(nextPredictions[key].predictedValue, results) 
+            : null;
+    });
 
     await Promise.all(telegramPromises);
 };
@@ -1253,7 +928,6 @@ async function startBot() {
         console.log("[BOT START] Waiting for game table selector...");
     }
 
-    // Check for incoming Telegram commands every 3.5 seconds
     setInterval(checkTelegramCommands, 3500);
 
     setInterval(async () => {
