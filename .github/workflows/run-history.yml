@@ -1,4 +1,4 @@
-name: Run History Bot 24/7
+name: Run Crash History Bot 24/7
 
 on:
   workflow_dispatch:
@@ -6,8 +6,9 @@ on:
     - cron: '0 */5 * * *'
 
 jobs:
-  run-bot:
+  run-history-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
 
     steps:
       - name: Checkout Repository
@@ -21,5 +22,5 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Run Bot
-        run: node index.js
+      - name: Run History Bot
+        run: node history.js
