@@ -130,7 +130,7 @@ async function startBot() {
                 const formattedNumbers = last10.map(num => formatNumberWithEmoji(num)).join(' ');
                 const timeStr = getFormattedDateTime();
 
-                const message = `🫆 bc.game/crash\nID: #${latestGameId}🕒${timeStr}\n ${formattedNumbers}\nTotal: ${totalCount}`;
+                const message = `🫆 join site: https://bc.game/i-3l5cmbvs3-n/\nID: #${latestGameId}🕒${timeStr}\n ${formattedNumbers}\nTotal: ${totalCount}`;
 
                 await sendTelegramMessage(message);
                 console.log(`[SENT] Game #${latestGameId}`);
