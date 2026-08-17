@@ -1,10 +1,12 @@
 {
-  "name": "crash-prediction-bot",
+  "name": "crash-bots-manager",
   "version": "1.0.0",
-  "description": "24/7 VIP Prediction Bot",
+  "description": "Multi Crash Bots Manager",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "start:prediction": "node index.js",
+    "start:history": "node history.js"
   },
   "dependencies": {
     "puppeteer": "^22.6.0",
