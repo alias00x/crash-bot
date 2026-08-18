@@ -1,10 +1,3 @@
-// send report to log every 50
-// send manulaly report (telegram request)
-// X1, X2, X3, X4, x5
-// vip i, ii, 4, log
-
-// added: x11,x12, x21,x22, x31,x32, x41,x42, x51,x52
-
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -14,21 +7,19 @@ const fs = require('fs');
 const path = require('path');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
-const TELEGRAM_VIPI_CHAT_ID = "-1003909320436";
+const TARGET_CHAT_PUB = "-1003912506906";
+const TELEGRAM_CHAT_VIPI = "-1003909320436";
 const TELEGRAM_VIP2_CHAT_ID = "-1003912437402";
-const TELEGRAM_VIP4_CHAT_ID = "-1003926861194";
-const TELEGRAM_LOG_CHAT_ID = "-1004340657482";
+const TELEGRAM_CHAT_LOG = "-1004340657482";
 const ENABLE_TELEGRAM = true;
 
 const TARGET_URL = "https://bc.game/game/crash";
-const VIP2_LOG_FILE = path.join(__dirname, 'vip2_reports.txt');
+const VIP2_LOG_FILE = path.join(__dirname, 'vip_log_report.txt');
 
 let lastProcessedGameId = null;
 let consecutiveSequentialCount = 0;
 let lastSentVipWarning = "";
-
 let totalEvaluatedGamesCount = 0;
-
 let gameHistoryRows = [];
 let lastTelegramUpdateId = 0;
 
@@ -42,14 +33,7 @@ const createStats = () => ({
     history20: []
 });
 
-// تعریف ۱۵ مدل (X1..X5 به همراه زیرشاخه های 1 و 2)
-const MODEL_KEYS = [
-    'X1', 'X11', 'X12',
-    'X2', 'X21', 'X22',
-    'X3', 'X31', 'X32',
-    'X4', 'X41', 'X42',
-    'X5', 'X51', 'X52'
-];
+const MODEL_KEYS = ['X1', 'X2'];
 
 const modelsState = {};
 MODEL_KEYS.forEach(key => {
@@ -61,6 +45,12 @@ MODEL_KEYS.forEach(key => {
         lastPts: 0
     };
 });
+
+const getTimeOnly = () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+};
 
 const getFormattedDateTime = (includeIcon = true) => {
     const now = new Date();
@@ -116,9 +106,7 @@ const calculateConfidence = (predictedVal, arr) => {
     const k2 = safeLog(n2);
     const k1 = safeLog(n1);
 
-    if (Math.abs(k2) < 1e-9) {
-        return 50;
-    }
+    if (Math.abs(k2) < 1e-9) return 50;
 
     const kConf = (k3 * k1) / k2;
     let rawNConf = safeExp(kConf);
@@ -134,7 +122,6 @@ const calculateConfidence = (predictedVal, arr) => {
 
     const rP = getRange(predictedVal);
     const rC = getRange(nConf);
-
     const ratio = Math.min(predictedVal, nConf) / Math.max(predictedVal, nConf);
 
     let pct = 50;
@@ -142,40 +129,23 @@ const calculateConfidence = (predictedVal, arr) => {
     if (rP === 1 && rC === 1) pct = 80 + 18 * ratio;
     else if (rP === 1 && rC === 2) pct = 60 + 35 * ratio;
     else if (rP === 1 && rC >= 3) pct = Math.min(29, 10 + 19 * ratio);
-
     else if (rP === 2 && rC === 1) pct = 70 + 25 * ratio;
     else if (rP === 2 && rC === 2) pct = 80 + 18 * ratio;
     else if (rP === 2 && rC >= 3) pct = Math.min(39, 15 + 24 * ratio);
-
     else if (rP === 3 && rC === 1) pct = Math.min(29, 10 + 19 * ratio);
     else if (rP === 3 && rC === 2) pct = Math.min(39, 15 + 24 * ratio);
     else if (rP === 3 && (rC === 3 || rC === 4)) pct = 50 + 45 * ratio;
     else if (rP === 3 && rC === 5) pct = 50 + 45 * ratio;
-
     else if (rP === 4 && rC === 1) pct = Math.min(19, 5 + 14 * ratio);
     else if (rP === 4 && rC === 2) pct = Math.min(29, 10 + 19 * ratio);
     else if (rP === 4 && (rC === 3 || rC === 4)) pct = 50 + 45 * ratio;
     else if (rP === 4 && rC === 5) pct = 80 + 18 * ratio;
-
     else if (rP === 5 && rC === 1) pct = Math.min(19, 5 + 14 * ratio);
     else if (rP === 5 && rC === 2) pct = Math.min(29, 10 + 19 * ratio);
     else if (rP === 5 && (rC === 3 || rC === 4)) pct = 50 + 45 * ratio;
     else if (rP === 5 && rC === 5) pct = 70 + 28 * ratio;
 
     return Math.min(98, Math.max(5, Math.round(pct)));
-};
-
-const getNConfValue = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 7) return 1.0;
-    const last7 = arr.slice(-7);
-    const [n7, n6, n5, n4, n3, n2, n1] = last7;
-    const k3 = safeLog(n3);
-    const k2 = safeLog(n2);
-    const k1 = safeLog(n1);
-    if (Math.abs(k2) < 1e-9) return 1.0;
-    const kConf = (k3 * k1) / k2;
-    let rawNConf = safeExp(kConf);
-    return rawNConf < 0 ? Math.abs(rawNConf) + 1.0 : rawNConf;
 };
 
 const updateStats = (stats, predVal, actualVal, pts) => {
@@ -206,278 +176,110 @@ const updateStats = (stats, predVal, actualVal, pts) => {
     }
 };
 
-const isSimilar = (v1, v2) => {
-    if (v1 === null || v2 === null || isNaN(v1) || isNaN(v2)) return false;
-    const minVal = Math.min(v1, v2);
-    if (minVal === 0) return Math.abs(v1 - v2) === 0;
-    const pctDiff = Math.abs(v1 - v2) / minVal;
-    return pctDiff <= 0.20;
+const isAlternating = (last6) => {
+    if (last6.length < 6) return false;
+    const b = last6.map(v => v >= 2.0);
+    const p1 = [true, false, true, false, true, false];
+    const p2 = [false, true, false, true, false, true];
+    const m1 = b.every((val, idx) => val === p1[idx]);
+    const m2 = b.every((val, idx) => val === p2[idx]);
+    return m1 || m2;
 };
 
-const checkCustomException = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 4) {
+const countConditionMet = (predVal, last6) => {
+    if (last6.length < 6) return false;
+    const countGte2 = last6.filter(v => v >= 2.0).length;
+    const countLt2 = 6 - countGte2;
+    if (predVal >= 2.0) {
+        return countGte2 >= 3;
+    } else {
+        return countLt2 >= 3;
+    }
+};
+
+const predictFormula1 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
+    const last6 = arr.slice(-6);
+
+    if (isAlternating(last6)) {
         return { status: 'wait' };
     }
 
-    const isR = (v) => v < 2.0;
-    const isG = (v) => v >= 2.0 && v < 10.0;
-    const isY = (v) => v >= 10.0;
-    const isLowR = (v) => v < 1.09;
+    const n1 = arr[arr.length - 1];
+    const n2 = arr[arr.length - 2];
+    const n3 = arr[arr.length - 3];
 
-    const len = arr.length;
+    const ln1 = safeLog(n1);
+    const ln2 = safeLog(n2);
+    const ln3 = safeLog(n3);
 
-    if (len >= 3 && isY(arr[len - 3]) && isG(arr[len - 2]) && isG(arr[len - 1])) {
-        if (isSimilar(arr[len - 2], arr[len - 1])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YGG)' };
-    }
-    if (len >= 4 && isY(arr[len - 4]) && isG(arr[len - 3]) && isR(arr[len - 2]) && isG(arr[len - 1])) {
-        if (isSimilar(arr[len - 3], arr[len - 1])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YGRG)' };
-    }
-    if (len >= 3 && isY(arr[len - 3]) && isR(arr[len - 2]) && isR(arr[len - 1])) {
-        if (isSimilar(arr[len - 2], arr[len - 1])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YRR)' };
-    }
-    if (len >= 4 && isY(arr[len - 4]) && isR(arr[len - 3]) && isG(arr[len - 2]) && isR(arr[len - 1])) {
-        if (isSimilar(arr[len - 3], arr[len - 1])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YRGR)' };
-    }
-    if (len >= 5 && isY(arr[len - 5]) && isR(arr[len - 4]) && isG(arr[len - 3]) && isG(arr[len - 2]) && isR(arr[len - 1])) {
-        if (isSimilar(arr[len - 4], arr[len - 1]) && isSimilar(arr[len - 3], arr[len - 2])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YRGGR)' };
-    }
-    if (len >= 5 && isY(arr[len - 5]) && isG(arr[len - 4]) && isR(arr[len - 3]) && isR(arr[len - 2]) && isG(arr[len - 1])) {
-        if (isSimilar(arr[len - 4], arr[len - 1]) && isSimilar(arr[len - 3], arr[len - 2])) return { status: 'predict', predictedValue: 10.0, ruleName: 'Symmetry (YGRRG)' };
-    }
+    if (Math.abs(ln2) < 1e-9) return { status: 'wait' };
 
-    if (len >= 4 && isLowR(arr[len - 4]) && isG(arr[len - 3]) && arr[len - 3] < 3.0 && isG(arr[len - 2]) && arr[len - 2] < 3.0 && isG(arr[len - 1])) {
-        return { status: 'predict', predictedValue: 10.0, ruleName: 'Step from Zero (RGGG)' };
-    }
-    if (len >= 4 && isLowR(arr[len - 4]) && isR(arr[len - 3]) && isG(arr[len - 2]) && arr[len - 2] < 3.0 && isG(arr[len - 1])) {
-        return { status: 'predict', predictedValue: 10.0, ruleName: 'Step from Zero (RRGG)' };
-    }
-
-    if (len >= 4 && isG(arr[len - 4]) && isG(arr[len - 3]) && isLowR(arr[len - 2]) && isG(arr[len - 1])) {
-        return { status: 'predict', predictedValue: 10.0, ruleName: 'Trapped Zero (GGRG)' };
-    }
-
-    if (len >= 6) {
-        const n6 = arr[len - 6];
-        const n4 = arr[len - 4];
-        const n2 = arr[len - 2];
-
-        const isN6Green = isG(n6) || isY(n6);
-        const isN4GreenOrMidRed = isG(n4) || (isR(n4) && n4 > 1.20);
-        const isN2LowRed = isLowR(n2);
-
-        if (isN6Green && isN4GreenOrMidRed && isN2LowRed) {
-            return { status: 'predict', predictedValue: 10.0, ruleName: 'Descent Death (n6,n4,n2)' };
-        }
-    }
-
-    return { status: 'wait' };
-};
-
-// فرمول های پایه X1 تا X5
-const predictFormula1 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 7) return { status: 'error' };
-    const last7 = arr.slice(-7);
-    const [n7, n6, n5, n4, n3, n2, n1] = last7;
-
-    const k7 = safeLog(n7), k6 = safeLog(n6), k5 = safeLog(n5), k4 = safeLog(n4), k3 = safeLog(n3), k2 = safeLog(n2), k1 = safeLog(n1);
-
-    const L5 = k7 + k5;
-    const L4 = k6 + k4;
-    const L3 = k5 + k3;
-    const L2 = k4 + k2;
-    const L1 = k3 + k1;
-
-    const dir53 = L3 > L5 ? 'up' : 'dn';
-    const dir42 = L2 > L4 ? 'up' : 'dn';
-    const dir31 = L1 > L3 ? 'up' : 'dn';
-
-    const patternKey = `${dir53}_${dir42}_${dir31}`;
-    const decisionTable = {
-        'up_up_up': 'up', 'up_dn_up': 'dn', 'dn_up_dn': 'up', 'dn_dn_dn': 'dn',
-        'up_dn_dn': 'wait', 'up_up_dn': 'wait', 'dn_dn_up': 'wait', 'dn_up_up': 'wait'
-    };
-
-    const predictionDir = decisionTable[patternKey];
-    if (predictionDir === 'wait') return { status: 'wait' };
-
-    const avgStep = (Math.abs(L3 - L5) + Math.abs(L2 - L4) + Math.abs(L1 - L3)) / 3;
-    let L0 = predictionDir === 'up' ? L2 + avgStep : L2 - avgStep;
-    const k0 = L0 - k2;
+    const k0 = (ln3 * ln1) / ln2;
     const rawN0 = safeExp(k0);
-
     let finalN0 = rawN0;
     let isWasNegative = false;
+
     if (rawN0 < 0) {
         finalN0 = Math.abs(rawN0) + 1.0;
         isWasNegative = true;
     }
 
-    return { status: 'predict', direction: predictionDir, predictedValue: Number(finalN0.toFixed(2)), wasNegative: isWasNegative };
+    if (isNaN(finalN0) || !isFinite(finalN0)) return { status: 'wait' };
+    if (finalN0 < 1.0) finalN0 = 1.01;
+
+    if (!countConditionMet(finalN0, last6)) {
+        return { status: 'wait' };
+    }
+
+    return {
+        status: 'predict',
+        direction: finalN0 >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(finalN0.toFixed(2)),
+        wasNegative: isWasNegative
+    };
 };
 
 const predictFormula2 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 7) return { status: 'error' };
-    const last7 = arr.slice(-7);
-    const [n7, n6, n5, n4, n3, n2, n1] = last7;
-
-    const k5 = safeLog(n5), k4 = safeLog(n4), k3 = safeLog(n3), k2 = safeLog(n2), k1 = safeLog(n1);
-    const L3 = k5 + k3, L2 = k4 + k2, L1 = k3 + k1;
-
-    let pctChange = 0;
-    if (Math.abs(L3) > 1e-9) pctChange = (L1 - L3) / Math.abs(L3);
-
-    const predictionDir = pctChange >= 0 ? 'up' : 'dn';
-    const L0 = L2 * (1 + pctChange);
-    const k0 = L0 - k2;
-    const rawN0 = safeExp(k0);
-
-    let finalN0 = rawN0;
-    let isWasNegative = false;
-    if (rawN0 < 0) {
-        finalN0 = Math.abs(rawN0) + 1.0;
-        isWasNegative = true;
-    }
-
-    return { status: 'predict', direction: predictionDir, predictedValue: Number(finalN0.toFixed(2)), wasNegative: isWasNegative };
-};
-
-const predictFormula3 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 6) return { status: 'error' };
-
+    if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
+    const last6 = arr.slice(-6);
     const len = arr.length;
-    const n1 = arr[len - 1], n2 = arr[len - 2], n3 = arr[len - 3], n4 = arr[len - 4], n6 = arr[len - 6];
-    const triplet = [n6, n4, n2];
-    const step1 = (n6 - 1.0) + (n4 - 1.0);
-    const step2 = (n4 - 1.0) + (n2 - 1.0);
-
-    let result = n2;
-    let predictionDir = 'dn';
-
-    if (n6 > n4 && n4 > n2) {
-        predictionDir = 'dn';
-        const decreaseRate = step1 !== 0 ? (step1 - step2) / step1 : 0;
-        const raw = n2 * (1 - decreaseRate);
-        const countUnder2 = triplet.filter(x => x < 2.0).length;
-        const countBetween2And10 = triplet.filter(x => x >= 2.0 && x < 10.0).length;
-        const countAbove10 = triplet.filter(x => x >= 10.0).length;
-
-        if (countUnder2 >= 2) result = raw + 1.0;
-        else if (countBetween2And10 >= 2) result = raw * 10.0;
-        else if (countAbove10 === 1 && countBetween2And10 === 1 && countUnder2 === 1) result = raw * 100.0;
-        else result = raw;
-    } else if (n6 < n4 && n4 < n2) {
-        predictionDir = 'up';
-        const growthRate = step1 !== 0 ? (step2 - step1) / step1 : 0;
-        const effectiveGrowth = Math.sqrt(Math.max(0, growthRate));
-        const countBetween2And10 = triplet.filter(x => x >= 2.0 && x < 10.0).length;
-
-        if (n2 >= 10.0) result = n2 + (step2 - step1) / 2;
-        else if (countBetween2And10 >= 2) result = n2 * (1 + growthRate / 2);
-        else result = n2 * (1 + effectiveGrowth);
-
-        const maxAllowed = n2 * 2.5;
-        if (result > maxAllowed) result = maxAllowed;
-    } else if (n6 > n4 && n4 < n2) {
-        predictionDir = 'up';
-        const dropForce = n6 - n4;
-        const scaleRatio = Math.sqrt(n2 / n6);
-        const effectiveForce = dropForce * scaleRatio;
-        const distToFloor = n2 - 1.0;
-
-        if (effectiveForce > distToFloor) result = 1.0 + (effectiveForce - distToFloor);
-        else result = n2 - effectiveForce;
-    } else if (n6 < n4 && n4 > n2) {
-        predictionDir = 'up';
-        const riseForce = n4 + n6;
-        const scaleRatio = Math.sqrt(n2 / n4);
-        result = n2 + (riseForce * scaleRatio);
-    }
-
-    const lnN2 = Math.log(n2);
-    if (lnN2 > 0) {
-        const logCheck = (Math.log(n1) * Math.log(n3)) / lnN2;
-        if (n2 < 2.0 && result > n2 && logCheck <= n2) result = logCheck;
-        if (result > 8.0) result = logCheck;
-    }
-
-    if (result < 1.0) result = 1.0;
-
-    return { status: 'predict', direction: predictionDir, predictedValue: Number(result.toFixed(2)), wasNegative: false };
-};
-
-const predictFormula4 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 5) return { status: 'error' };
-    const last5 = arr.slice(-5);
-    const weights = [0.1, 0.15, 0.2, 0.25, 0.3];
-    let weightedLog = 0;
-    for (let i = 0; i < 5; i++) {
-        weightedLog += safeLog(last5[i]) * weights[i];
-    }
-    const momentum = safeLog(last5[4]) - safeLog(last5[2]);
-    const targetLog = weightedLog + momentum * 0.5;
-    const rawVal = safeExp(targetLog);
-    const finalVal = Math.max(1.01, rawVal < 0 ? Math.abs(rawVal) + 1.0 : rawVal);
-    return {
-        status: 'predict',
-        direction: finalVal >= 2.0 ? 'up' : 'dn',
-        predictedValue: Number(finalVal.toFixed(2)),
-        wasNegative: false
-    };
-};
-
-const predictFormula5 = (arr) => {
-    if (!Array.isArray(arr) || arr.length < 5) return { status: 'error' };
-    const [n5, n4, n3, n2, n1] = arr.slice(-5);
-    const ratio1 = n1 / Math.max(0.1, n2);
-    const ratio2 = n3 / Math.max(0.1, n4);
-    const avgRatio = (ratio1 + ratio2) / 2;
-    let target = n1 * avgRatio;
-    if (target > 50) target = 50;
-    if (target < 1.0) target = 1.01;
-    return {
-        status: 'predict',
-        direction: target >= 2.0 ? 'up' : 'dn',
-        predictedValue: Number(target.toFixed(2)),
-        wasNegative: false
-    };
-};
-
-// سازنده فرمول‌های فرعی 1 و 2 با فیلتر شروط n1, n2, n3 و n2, n4
-const applySubRule1 = (basePrediction, arr) => {
-    if (!basePrediction || basePrediction.status !== 'predict' || arr.length < 3) {
-        return { status: 'wait' };
-    }
-    const len = arr.length;
-    const n1 = arr[len - 1];
-    const n2 = arr[len - 2];
-    const n3 = arr[len - 3];
-    const val = basePrediction.predictedValue;
-
-    if (val >= 2.0) {
-        if (n1 >= 2.0 || n2 >= 2.0 || n3 >= 2.0) return { ...basePrediction };
-        return { status: 'wait' };
-    } else {
-        if (n1 < 2.0 || n2 < 2.0 || n3 < 2.0) return { ...basePrediction };
-        return { status: 'wait' };
-    }
-};
-
-const applySubRule2 = (basePrediction, arr) => {
-    if (!basePrediction || basePrediction.status !== 'predict' || arr.length < 4) {
-        return { status: 'wait' };
-    }
-    const len = arr.length;
-    const n2 = arr[len - 2];
+    const n6 = arr[len - 6];
     const n4 = arr[len - 4];
-    const val = basePrediction.predictedValue;
+    const n2 = arr[len - 2];
 
-    if (val >= 2.0) {
-        if (n2 >= 2.0 || n4 >= 2.0) return { ...basePrediction };
-        return { status: 'wait' };
+    if (n6 <= 0 || n4 <= 0 || n2 <= 0) return { status: 'wait' };
+
+    let pred = n2;
+
+    if (n6 < n4 && n4 < n2) {
+        const g1 = (n4 - n6) / n6;
+        const g2 = (n2 - n4) / n4;
+        const avgGrowth = (g1 + g2) / 2;
+        pred = n2 * (1 + avgGrowth);
+    } else if (n6 > n4 && n4 > n2) {
+        const d1 = (n6 - n4) / n6;
+        const d2 = (n4 - n2) / n4;
+        const avgDrop = (d1 + d2) / 2;
+        pred = n2 * (1 - avgDrop);
     } else {
-        if (n2 < 2.0 || n4 < 2.0) return { ...basePrediction };
+        const rate = (n4 - n6) / n6;
+        pred = n2 * (1 + rate);
+    }
+
+    if (isNaN(pred) || !isFinite(pred)) return { status: 'wait' };
+    if (pred < 1.0) pred = 1.01;
+
+    if (!countConditionMet(pred, last6)) {
         return { status: 'wait' };
     }
+
+    return {
+        status: 'predict',
+        direction: pred >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(pred.toFixed(2)),
+        wasNegative: false
+    };
 };
 
 const sendTelegramMessage = async (chatId, messageHtml) => {
@@ -522,13 +324,12 @@ const sendTelegramDocument = async (chatId, filePath, caption = "") => {
 };
 
 const generateStructuredLogFile = () => {
-    const timeText = getFormattedDateTime(false);
-    let output = `VIP II & VIP 4 Full Report | Date: ${timeText}\n\n`;
-    output += `Game ID  | Predicted | Actual |  %  | Point | Model\n`;
+    let output = `Game ID  | Predicted | Actual |  %  | Point | Model  | Time\n`;
 
     gameHistoryRows.forEach(row => {
         const cGame = `#${row.gameId}`.padEnd(9, ' ');
-        const cPred = String(row.pred).padEnd(10, ' ');
+        let predStr = row.pred === "wait" ? "wait" : (typeof row.pred === 'number' && row.pred > 1000 ? "1000" : String(row.pred));
+        const cPred = predStr.padEnd(10, ' ');
         const cAct = (typeof row.actual === 'number' ? row.actual.toFixed(2) : String(row.actual)).padEnd(7, ' ');
         const cConf = (row.conf !== null && row.conf !== '-' ? `${row.conf}%` : '-').padEnd(4, ' ');
         
@@ -537,18 +338,10 @@ const generateStructuredLogFile = () => {
             ptsFormatted = row.pts >= 0 ? `+${row.pts}` : `${row.pts}`;
         }
         const cPts = ` ${ptsFormatted} `.padEnd(6, ' ');
-        const cX = row.x;
+        const cX = String(row.x).padEnd(6, ' ');
+        const cTime = row.time || "-";
 
-        output += `${cGame}| ${cPred}| ${cAct}| ${cConf}| ${cPts}| ${cX}\n`;
-    });
-
-    output += `\n================== SUMMARY STATS ==================\n`;
-    MODEL_KEYS.forEach(k => {
-        const s = modelsState[k].stats;
-        const u2 = `${s.under2.count}(${s.under2.negPoints}/${s.under2.posPoints >= 0 ? '+' : ''}${s.under2.posPoints})`;
-        const o2 = `${s.over2.count}(${s.over2.negPoints}/${s.over2.posPoints >= 0 ? '+' : ''}${s.over2.posPoints})`;
-        const o10 = `${s.over10.count}(${s.over10.negPoints}/zero(${s.over10.zeroCount})/${s.over10.posPoints >= 0 ? '+' : ''}${s.over10.posPoints})`;
-        output += `${k.padEnd(4)} -> -2: ${u2} | +2: ${o2} | +10: ${o10} | Total: ${s.totalPredictions}\n`;
+        output += `${cGame}| ${cPred}| ${cAct}| ${cConf}| ${cPts}| ${cX}| ${cTime}\n`;
     });
 
     fs.writeFileSync(VIP2_LOG_FILE, output, 'utf8');
@@ -576,7 +369,7 @@ const checkTelegramCommands = async () => {
                     await sendTelegramDocument(
                         senderChatId,
                         VIP2_LOG_FILE,
-                        `📁 <b>VIP Log Report</b>\n<b>Games:</b> ${totalEvaluatedGamesCount}\n<b>Time:</b> ${getFormattedDateTime(false)}`
+                        `📁 <b>Full Log Report</b>\n<b>Games:</b> ${totalEvaluatedGamesCount}\n<b>Time:</b> ${getFormattedDateTime(false)}`
                     );
                 }
             }
@@ -595,56 +388,43 @@ const sendVipWarningAlert = async (warningMsg) => {
 ⚠️ <b>Issue Detected:</b>
 <code>${warningMsg}</code>
 
-🔒 <b>Status:</b> Predictions PAUSED!.
+🔒 <b>Status:</b> Predictions PAUSED!
 <b>─────────────────────</b>
 `;
 
     await Promise.all([
-        sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, warningHtml),
-        sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, warningHtml),
-        sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, warningHtml)
+        sendTelegramMessage(TELEGRAM_CHAT_VIPI, warningHtml),
+        sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, warningHtml)
     ]);
 };
 
 const formatColoredNum = (num) => {
-    if (num < 2.00) return `🔴 ${num}`;
-    if (num < 10.00) return `🟢 ${num}`;
-    return `🟡 ${num}`;
+    if (num < 2.00) return `🔴${num.toFixed(2)}`;
+    if (num < 10.00) return `🟢${num.toFixed(2)}`;
+    return `🟡${num.toFixed(2)}`;
 };
 
-const formatNextLine = (prediction, arr, isWinnerInConflict = false, isLoserInConflict = false) => {
+const formatNextLine = (prediction, arr) => {
     if (!prediction || prediction.status === 'wait') {
         return "wait ⚪";
     }
-    const val = prediction.predictedValue;
-    const displayVal = val >= 1000 ? "+1000" : val;
+    const rawVal = prediction.predictedValue;
+    const val = rawVal > 1000 ? 1000 : rawVal;
+    const displayVal = val >= 1000 ? "1000" : val.toFixed(2);
     let note = prediction.wasNegative ? " (Negative)" : "";
 
     let baseConf = calculateConfidence(val, arr) || 50;
-    if (isWinnerInConflict) baseConf = Math.max(52, Math.min(98, baseConf));
-    else if (isLoserInConflict) baseConf = Math.min(48, Math.max(5, baseConf));
-
     const factor = Math.max(0.2, baseConf / 100);
 
     if (val < 2.0) {
-        const c0 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 5, baseConf));
-        return `${displayVal} 🔴 (${c0}%)${note}`;
+        return `${displayVal} 🔴 (${baseConf}%)${note}`;
     } else if (val >= 2.0 && val < 10.0) {
-        const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, baseConf));
-        return `${displayVal} 🟢 (${c2}%)${note}`;
+        return `${displayVal} 🟢 (${baseConf}%)${note}`;
     } else {
         const c10 = Math.min(92, Math.max(10, baseConf));
-        const c2 = Math.min(isLoserInConflict ? 48 : 98, Math.max(isWinnerInConflict ? 52 : 10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
+        const c2 = Math.min(98, Math.max(10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
         return `${displayVal} 🟢 (${c2}%)   10🟡 (${c10}%)${note}`;
     }
-};
-
-const getPredictionIcon = (pred) => {
-    if (!pred || pred.status === 'wait') return "⚪";
-    const v = pred.predictedValue;
-    if (v < 2.0) return "🔴";
-    if (v < 10.0) return "🟢";
-    return "🟡";
 };
 
 const formatSystemBlockVip1 = (sysName, stats, lastPts, totalScore) => {
@@ -652,7 +432,7 @@ const formatSystemBlockVip1 = (sysName, stats, lastPts, totalScore) => {
     const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
     const negTot = stats.totalNegPoints;
     const posTot = stats.totalPosPoints >= 0 ? `+${stats.totalPosPoints}` : `${stats.totalPosPoints}`;
-    return `🩵 <b>${sysName}: Total: </b>${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}`;
+    return `🩵 ${sysName}: Total: ${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}`;
 };
 
 const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
@@ -680,11 +460,11 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
     });
     const pos20Str = pos20 >= 0 ? `+${pos20}` : `${pos20}`;
 
-    let str = `🩵 <b>${sysName}: Total: </b>${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}\n`;
-    str += `<b>Last 20 </b>(${neg20} / ${pos20Str})\n`;
-    str += `<b>- 2:</b> ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
-    str += `<b>+2:</b> ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
-    str += `<b>+10:</b> ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})\n`;
+    let str = `🩵 ${sysName}: Total: ${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}\n`;
+    str += `Last 20 (${neg20} / ${pos20Str})\n`;
+    str += `- 2: ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
+    str += `+2: ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
+    str += `+10: ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})\n`;
 
     return str;
 };
@@ -692,10 +472,10 @@ const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
 const processAndSendPrediction = async (results, gameId) => {
     const actualValue = results[results.length - 1];
     const timeStrWithIcon = getFormattedDateTime(true);
+    const currentTimeOnly = getTimeOnly();
 
     totalEvaluatedGamesCount++;
 
-    // ارزیابی تمامی مدل‌ها و ثبت تاریخچه
     MODEL_KEYS.forEach(key => {
         const m = modelsState[key];
         let pts = 0;
@@ -714,7 +494,8 @@ const processAndSendPrediction = async (results, gameId) => {
             actual: actualValue,
             conf: m.pendingConf !== null ? m.pendingConf : '-',
             pts: pts,
-            x: key
+            x: key,
+            time: currentTimeOnly
         });
     });
 
@@ -722,161 +503,64 @@ const processAndSendPrediction = async (results, gameId) => {
         gameHistoryRows = gameHistoryRows.slice(-5000);
     }
 
-    // تولید پیش‌بینی‌های جدید
     const p1 = predictFormula1(results);
     const p2 = predictFormula2(results);
-    const p3 = predictFormula3(results);
-    const p4 = predictFormula4(results);
-    const p5 = predictFormula5(results);
 
     const nextPredictions = {
         'X1': p1,
-        'X11': applySubRule1(p1, results),
-        'X12': applySubRule2(p1, results),
-
-        'X2': p2,
-        'X21': applySubRule1(p2, results),
-        'X22': applySubRule2(p2, results),
-
-        'X3': p3,
-        'X31': applySubRule1(p3, results),
-        'X32': applySubRule2(p3, results),
-
-        'X4': p4,
-        'X41': applySubRule1(p4, results),
-        'X42': applySubRule2(p4, results),
-
-        'X5': p5,
-        'X51': applySubRule1(p5, results),
-        'X52': applySubRule2(p5, results)
+        'X2': p2
     };
 
-    // بروزرسانی تعداد کل پیش بینی های هر مدل
     MODEL_KEYS.forEach(k => {
         if (nextPredictions[k] && nextPredictions[k].status === 'predict') {
             modelsState[k].stats.totalPredictions++;
         }
     });
 
-    // مدیریت تعارض‌های اختصاصی برای X1 و X2 جهت گزارش در VIP I و VIP II
-    const f1Active = p1 && p1.status === 'predict';
-    const f2Active = p2 && p2.status === 'predict';
-    let f1WinnerInConflict = false, f1LoserInConflict = false;
-    let f2WinnerInConflict = false, f2LoserInConflict = false;
-
-    if (f1Active && f2Active) {
-        const f1Over2 = p1.predictedValue >= 2.0;
-        const f2Over2 = p2.predictedValue >= 2.0;
-        if (f1Over2 !== f2Over2) {
-            const nConf = getNConfValue(results);
-            const confOver2 = nConf >= 2.0;
-            if (f1Over2 === confOver2 && f2Over2 !== confOver2) {
-                f1WinnerInConflict = true; f2LoserInConflict = true;
-            } else if (f2Over2 === confOver2 && f1Over2 !== confOver2) {
-                f2WinnerInConflict = true; f1LoserInConflict = true;
-            } else {
-                const c1 = calculateConfidence(p1.predictedValue, results);
-                const c2 = calculateConfidence(p2.predictedValue, results);
-                if (c1 >= c2) { f1WinnerInConflict = true; f2LoserInConflict = true; }
-                else { f2WinnerInConflict = true; f1LoserInConflict = true; }
-            }
-        }
-    }
-
-    const conf1 = f1Active ? calculateConfidence(p1.predictedValue, results) : null;
-    const conf2 = f2Active ? calculateConfidence(p2.predictedValue, results) : null;
-    const isGoodSignal = f1Active && f2Active && ((p1.predictedValue >= 2.0) === (p2.predictedValue >= 2.0)) && (conf1 || 0) > 30 && (conf2 || 0) > 30;
-
-    const last4 = results.slice(-4);
-    const last4Formatted = last4.map(num => formatColoredNum(num)).join('  ');
-
     generateStructuredLogFile();
 
     const telegramPromises = [];
 
-    // 1. VIP I
-    let vip1Status = isGoodSignal ? "Good" : "Normal";
-    let vip1Message = `<b>👑 VIP I </b>\n`;
-    vip1Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
-    vip1Message += `${last4Formatted}\n`;
-    vip1Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
+    // 1. TARGET_CHAT_PUB (Public Channel)
+    const last10 = results.slice(-10);
+    const last10Formatted = last10.map(num => formatColoredNum(num)).join(' ');
+    const pubMessage = `🫆 join site: https://bc.game/i-3l5cmbvs3-n\nID: #${gameId} ${timeStrWithIcon}\n ${last10Formatted}\nContact for VIP access & live predictions: @alias00x`;
+    telegramPromises.push(sendTelegramMessage(TARGET_CHAT_PUB, pubMessage));
+
+    // 2. TELEGRAM_CHAT_VIPI (VIP I)
+    const last5 = results.slice(-5);
+    const last5Formatted = last5.map(num => formatColoredNum(num)).join('  ');
+
+    let vip1Message = `👑 VIP I \n`;
+    vip1Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
+    vip1Message += `${last5Formatted}\n`;
+    vip1Message += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
     vip1Message += formatSystemBlockVip1("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
     vip1Message += formatSystemBlockVip1("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n\n";
-    vip1Message += `<b>Next X1:</b>  ${formatNextLine(p1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-    vip1Message += `<b>Next X2:</b>  ${formatNextLine(p2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
-    vip1Message += `<b>Prediction status:</b>  ${vip1Status}`;
-    telegramPromises.push(sendTelegramMessage(TELEGRAM_VIPI_CHAT_ID, vip1Message));
+    vip1Message += `Next X1:  ${formatNextLine(p1, results)}\n`;
+    vip1Message += `Next X2:  ${formatNextLine(p2, results)}`;
+    telegramPromises.push(sendTelegramMessage(TELEGRAM_CHAT_VIPI, vip1Message));
 
-    // 2. VIP II
-    let vip2Message = `<b>👑👑 VIP II </b>\n`;
-    vip2Message += `<b>Game ID:</b> #${gameId} | ${timeStrWithIcon}\n`;
-    vip2Message += `${last4Formatted}\n`;
-    vip2Message += `<b>Total prediction:</b> ${totalEvaluatedGamesCount}\n\n`;
+    // 3. TELEGRAM_VIP2_CHAT_ID (VIP II)
+    let vip2Message = `👑👑 VIP II \n`;
+    vip2Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
+    vip2Message += `${last5Formatted}\n`;
+    vip2Message += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
     vip2Message += formatSystemBlockVip2("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X3", modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
-    vip2Message += `<b>Next X1:</b>  ${formatNextLine(p1, results, f1WinnerInConflict, f1LoserInConflict)}\n`;
-    vip2Message += `<b>Next X2:</b>  ${formatNextLine(p2, results, f2WinnerInConflict, f2LoserInConflict)}\n`;
-    vip2Message += `<b>Next X3:</b>  ${formatNextLine(p3, results, false, false)}`;
+    vip2Message += `X1:  ${formatNextLine(p1, results)}\n`;
+    vip2Message += `X2:  ${formatNextLine(p2, results)}`;
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // 3. VIP 4 (ساختار جدید)
-    const isVip4Periodic = totalEvaluatedGamesCount > 0 && (totalEvaluatedGamesCount % 25 === 0);
-
-    if (isVip4Periodic) {
-        // گزارش کامل هر ۲۵ دست یکبار برای تمام مدل‌ها
-        let vip4FullMessage = `👑👑 VIP II \n`;
-        vip4FullMessage += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
-        vip4FullMessage += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
-
-        for (let i = 1; i <= 5; i++) {
-            const kBase = `X${i}`;
-            const k1 = `X${i}1`;
-            const k2 = `X${i}2`;
-
-            vip4FullMessage += formatSystemBlockVip2(kBase, modelsState[kBase].stats, modelsState[kBase].lastPts, modelsState[kBase].totalScore);
-            vip4FullMessage += formatSystemBlockVip2(k1, modelsState[k1].stats, modelsState[k1].lastPts, modelsState[k1].totalScore);
-            vip4FullMessage += formatSystemBlockVip2(k2, modelsState[k2].stats, modelsState[k2].lastPts, modelsState[k2].totalScore);
-            if (i < 5) vip4FullMessage += "\n";
-        }
-        telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip4FullMessage));
-    } else {
-        // گزارش استاندارد هر دست VIP 4
-        let vip4NormalMessage = `👑👑 VIP II \n`;
-        vip4NormalMessage += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
-        vip4NormalMessage += `${last4Formatted}\n`;
-        vip4NormalMessage += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
-
-        for (let i = 1; i <= 5; i++) {
-            const kBase = `X${i}`;
-            const k1 = `X${i}1`;
-            const k2 = `X${i}2`;
-
-            vip4NormalMessage += formatSystemBlockVip1(kBase, modelsState[kBase].stats, modelsState[kBase].lastPts, modelsState[kBase].totalScore) + "\n";
-            vip4NormalMessage += `  ` + formatSystemBlockVip1(k1, modelsState[k1].stats, modelsState[k1].lastPts, modelsState[k1].totalScore) + "\n";
-            vip4NormalMessage += `  ` + formatSystemBlockVip1(k2, modelsState[k2].stats, modelsState[k2].lastPts, modelsState[k2].totalScore) + "\n\n";
-        }
-
-        for (let i = 1; i <= 5; i++) {
-            const iconBase = getPredictionIcon(nextPredictions[`X${i}`]);
-            const icon1 = getPredictionIcon(nextPredictions[`X${i}1`]);
-            const icon2 = getPredictionIcon(nextPredictions[`X${i}2`]);
-            vip4NormalMessage += `Next X${i}, X${i}1, X${i}2:  ${iconBase} ${icon1} ${icon2}\n`;
-        }
-
-        telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP4_CHAT_ID, vip4NormalMessage));
-    }
-
-    // 4. ارسال دوره‌ای فایل لاگ به TELEGRAM_LOG_CHAT_ID
+    // 4. TELEGRAM_CHAT_LOG (Periodic File Log every 50 games)
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
         telegramPromises.push(sendTelegramDocument(
-            TELEGRAM_LOG_CHAT_ID,
+            TELEGRAM_CHAT_LOG,
             VIP2_LOG_FILE,
-            `📊 <b>Full Systems Log Report</b>\n<b>Game ID:</b> #${gameId}\n<b>Total Predictions:</b> ${totalEvaluatedGamesCount}`
+            `📊 <b>Full Log Report</b>\n<b>Game ID:</b> #${gameId}\n<b>Total:</b> ${totalEvaluatedGamesCount}`
         ));
     }
 
-    // بروزرسانی پیش‌بینی‌های در انتظار
     MODEL_KEYS.forEach(key => {
         modelsState[key].pendingPrediction = nextPredictions[key];
         modelsState[key].pendingConf = (nextPredictions[key] && nextPredictions[key].status === 'predict') 
