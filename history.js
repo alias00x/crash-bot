@@ -137,7 +137,7 @@ async function startBot() {
                 const showHeader = totalCount % 10 === 1 || totalCount === 1;
                 const headerText = showHeader ? "🫆 bc.game/crash\n" : "";
 
-                const message = `🫆 join site: https://bc.game/i-3l5cmbvs3-n/\nID: #${latestGameId}🕒${timeStr}\n ${formattedNumbers}\nTotal: ${totalCount}`;
+                const headerText = showHeader ? "🫆 join site: https://bc.game/i-3l5cmbvs3-n/\nID" : "";
 
                 await sendTelegramMessage(message);
                 console.log(`[SENT] Game #${latestGameId}`);
