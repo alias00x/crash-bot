@@ -1,3 +1,6 @@
+
+
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -130,6 +133,10 @@ async function startBot() {
                 const formattedNumbers = last10.map(num => formatNumberWithEmoji(num)).join(' ');
                 const timeStr = getFormattedDateTime();
 
+                // Display header only once every 10 messages
+                const showHeader = totalCount % 10 === 1 || totalCount === 1;
+                const headerText = showHeader ? "🫆 bc.game/crash\n" : "";
+
                 const message = `🫆 join site: https://bc.game/i-3l5cmbvs3-n/\nID: #${latestGameId}🕒${timeStr}\n ${formattedNumbers}\nTotal: ${totalCount}`;
 
                 await sendTelegramMessage(message);
@@ -150,4 +157,4 @@ http.createServer((req, res) => {
     res.end('Last 10 Numbers Bot is running!\n');
 }).listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
-});
+});             
