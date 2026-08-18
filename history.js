@@ -1,6 +1,3 @@
-
-
-
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -11,6 +8,7 @@ const http = require('http');
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TARGET_CHAT_ID = "-1003912506906";
 const TARGET_URL = "https://bc.game/game/crash";
+const PROMO_LINK = "🫆 join site: https://bc.game/i-3l5cmbvs3-n";
 
 let lastProcessedGameId = null;
 let totalCount = 0;
@@ -43,7 +41,8 @@ const sendTelegramMessage = async (messageText) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 chat_id: TARGET_CHAT_ID,
-                text: messageText
+                text: messageText,
+                disable_web_page_preview: true
             })
         });
     } catch (error) {
@@ -133,11 +132,9 @@ async function startBot() {
                 const formattedNumbers = last10.map(num => formatNumberWithEmoji(num)).join(' ');
                 const timeStr = getFormattedDateTime();
 
-                // Display header only once every 10 messages
-                const showHeader = totalCount % 10 === 1 || totalCount === 1;
-                const headerText = showHeader ? "🫆 bc.game/crash\n" : "";
-
-                const headerText = showHeader ? "🫆 join site: https://bc.game/i-3l5cmbvs3-n/\nID" : "";
+                // Show promotion header once every 10 messages
+                const promoHeader = (totalCount % 10 === 0) ? `${PROMO_LINK}\n` : '';
+                const message = `${promoHeader}ID: #${latestGameId}🕒${timeStr}\n ${formattedNumbers}\nTotal: ${totalCount}`;
 
                 await sendTelegramMessage(message);
                 console.log(`[SENT] Game #${latestGameId}`);
@@ -157,4 +154,4 @@ http.createServer((req, res) => {
     res.end('Last 10 Numbers Bot is running!\n');
 }).listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
-});             
+});
