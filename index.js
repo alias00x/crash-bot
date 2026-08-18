@@ -33,7 +33,7 @@ const createStats = () => ({
     history20: []
 });
 
-const MODEL_KEYS = ['X1', 'X2'];
+const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4'];
 
 const modelsState = {};
 MODEL_KEYS.forEach(key => {
@@ -181,9 +181,7 @@ const isAlternating = (last6) => {
     const b = last6.map(v => v >= 2.0);
     const p1 = [true, false, true, false, true, false];
     const p2 = [false, true, false, true, false, true];
-    const m1 = b.every((val, idx) => val === p1[idx]);
-    const m2 = b.every((val, idx) => val === p2[idx]);
-    return m1 || m2;
+    return b.every((val, idx) => val === p1[idx]) || b.every((val, idx) => val === p2[idx]);
 };
 
 const countConditionMet = (predVal, last6) => {
@@ -217,13 +215,7 @@ const predictFormula1 = (arr) => {
 
     const k0 = (ln3 * ln1) / ln2;
     const rawN0 = safeExp(k0);
-    let finalN0 = rawN0;
-    let isWasNegative = false;
-
-    if (rawN0 < 0) {
-        finalN0 = Math.abs(rawN0) + 1.0;
-        isWasNegative = true;
-    }
+    let finalN0 = rawN0 < 0 ? Math.abs(rawN0) + 1.0 : rawN0;
 
     if (isNaN(finalN0) || !isFinite(finalN0)) return { status: 'wait' };
     if (finalN0 < 1.0) finalN0 = 1.01;
@@ -236,13 +228,18 @@ const predictFormula1 = (arr) => {
         status: 'predict',
         direction: finalN0 >= 2.0 ? 'up' : 'dn',
         predictedValue: Number(finalN0.toFixed(2)),
-        wasNegative: isWasNegative
+        wasNegative: rawN0 < 0
     };
 };
 
 const predictFormula2 = (arr) => {
     if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
     const last6 = arr.slice(-6);
+
+    if (isAlternating(last6)) {
+        return { status: 'wait' };
+    }
+
     const len = arr.length;
     const n6 = arr[len - 6];
     const n4 = arr[len - 4];
@@ -255,13 +252,11 @@ const predictFormula2 = (arr) => {
     if (n6 < n4 && n4 < n2) {
         const g1 = (n4 - n6) / n6;
         const g2 = (n2 - n4) / n4;
-        const avgGrowth = (g1 + g2) / 2;
-        pred = n2 * (1 + avgGrowth);
+        pred = n2 * (1 + (g1 + g2) / 2);
     } else if (n6 > n4 && n4 > n2) {
         const d1 = (n6 - n4) / n6;
         const d2 = (n4 - n2) / n4;
-        const avgDrop = (d1 + d2) / 2;
-        pred = n2 * (1 - avgDrop);
+        pred = n2 * (1 - (d1 + d2) / 2);
     } else {
         const rate = (n4 - n6) / n6;
         pred = n2 * (1 + rate);
@@ -278,6 +273,102 @@ const predictFormula2 = (arr) => {
         status: 'predict',
         direction: pred >= 2.0 ? 'up' : 'dn',
         predictedValue: Number(pred.toFixed(2)),
+        wasNegative: false
+    };
+};
+
+const predictFormula3 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
+    const len = arr.length;
+    const n1 = arr[len - 1];
+    const n2 = arr[len - 2];
+    const n3 = arr[len - 3];
+    const n4 = arr[len - 4];
+    const n5 = arr[len - 5];
+
+    const ln5 = safeLog(n5);
+    const ln3 = safeLog(n3);
+    const ln4 = safeLog(n4);
+
+    if (Math.abs(ln4) < 1e-9) return { status: 'wait' };
+
+    const kPrev = (ln5 * ln3) / ln4;
+    let rawPrev = safeExp(kPrev);
+    let predN2 = rawPrev < 0 ? Math.abs(rawPrev) + 1.0 : rawPrev;
+
+    let x1FailedOnN2 = false;
+
+    if (predN2 >= 2.0) {
+        if (n2 < 2.0) {
+            x1FailedOnN2 = true;
+        } else if (n2 < 0.5 * predN2) {
+            x1FailedOnN2 = true;
+        }
+    } else {
+        if (n2 >= 2.0) {
+            x1FailedOnN2 = true;
+        } else {
+            const diffPct = Math.abs(n2 - predN2) / Math.max(0.1, predN2);
+            if (diffPct > 0.5) {
+                x1FailedOnN2 = true;
+            }
+        }
+    }
+
+    if (!x1FailedOnN2) {
+        return { status: 'wait' };
+    }
+
+    const ln1 = safeLog(n1);
+    const ln2 = safeLog(n2);
+    if (Math.abs(ln2) < 1e-9) return { status: 'wait' };
+
+    const k0 = (ln3 * ln1) / ln2;
+    let rawN0 = safeExp(k0);
+    let basePred = rawN0 < 0 ? Math.abs(rawN0) + 1.0 : rawN0;
+
+    let invertedPred;
+    if (basePred >= 2.0) {
+        invertedPred = Math.max(1.10, Math.min(1.95, 2.0 / Math.max(1.05, basePred / 2)));
+    } else {
+        invertedPred = Math.max(2.10, 2.0 + (2.0 - basePred) * 2.5);
+    }
+
+    return {
+        status: 'predict',
+        direction: invertedPred >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(invertedPred.toFixed(2)),
+        wasNegative: rawN0 < 0
+    };
+};
+
+const predictFormula4 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 5) return { status: 'wait' };
+    const len = arr.length;
+    const n1 = arr[len - 1];
+    const n2 = arr[len - 2];
+    const n3 = arr[len - 3];
+    const n4 = arr[len - 4];
+    const n5 = arr[len - 5];
+
+    if (n5 <= 0 || n4 <= 0 || n3 <= 0 || n2 <= 0 || n1 <= 0) return { status: 'wait' };
+
+    const rate53 = n3 / n5;
+    const rate42 = n2 / n4;
+    const rateMultiplier = rate42 / Math.max(0.001, rate53);
+
+    const rate31 = n1 / n3;
+    const targetRate = rate31 * rateMultiplier;
+
+    let predN0 = n2 * targetRate;
+
+    if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
+    if (predN0 < 1.0) predN0 = 1.01;
+
+    return {
+        status: 'predict',
+        direction: predN0 >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(predN0.toFixed(2)),
         wasNegative: false
     };
 };
@@ -505,10 +596,14 @@ const processAndSendPrediction = async (results, gameId) => {
 
     const p1 = predictFormula1(results);
     const p2 = predictFormula2(results);
+    const p3 = predictFormula3(results);
+    const p4 = predictFormula4(results);
 
     const nextPredictions = {
         'X1': p1,
-        'X2': p2
+        'X2': p2,
+        'X3': p3,
+        'X4': p4
     };
 
     MODEL_KEYS.forEach(k => {
@@ -548,8 +643,10 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
     vip2Message += formatSystemBlockVip2("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X3", modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
     vip2Message += `X1:  ${formatNextLine(p1, results)}\n`;
-    vip2Message += `X2:  ${formatNextLine(p2, results)}`;
+    vip2Message += `X2:  ${formatNextLine(p2, results)}\n`;
+    vip2Message += `X3:  ${formatNextLine(p3, results)}`;
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
     // 4. TELEGRAM_CHAT_LOG (Periodic File Log every 50 games)
