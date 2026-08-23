@@ -33,7 +33,7 @@ const createStats = () => ({
     history20: []
 });
 
-const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4'];
+const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4', 'X5'];
 
 const modelsState = {};
 MODEL_KEYS.forEach(key => {
@@ -373,6 +373,51 @@ const predictFormula4 = (arr) => {
     };
 };
 
+const predictFormula5 = (arr) => {
+    if (!Array.isArray(arr) || arr.length < 8) return { status: 'wait' };
+    const len = arr.length;
+
+    const n8 = arr[len - 8];
+    const n6 = arr[len - 6];
+    const n4 = arr[len - 4];
+    const n2 = arr[len - 2];
+
+    const isParabolicBowl = (n8 > n6) && (n6 <= n4) && (n4 < n2) && (n2 >= n8 * 0.95);
+    if (isParabolicBowl) {
+        return { status: 'wait' };
+    }
+
+    const L64 = (n6 - 1.0) + (n4 - 1.0);
+    const L42 = (n4 - 1.0) + (n2 - 1.0);
+
+    if (L64 <= 0 || L42 <= 0) return { status: 'wait' };
+
+    let targetL20;
+
+    if (n6 < n4 && n4 < n2) {
+        const expansionRatio = L42 / L64;
+        targetL20 = L42 * expansionRatio;
+    } else if (n6 > n4 && n4 > n2) {
+        const contractionRatio = L42 / L64;
+        targetL20 = L42 * contractionRatio;
+    } else {
+        targetL20 = (L42 * L42) / L64;
+    }
+
+    const dropFromN2 = n2 - 1.0;
+    let predN0 = 1.0 + (targetL20 - dropFromN2);
+
+    if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
+    if (predN0 < 1.01) predN0 = 1.01;
+
+    return {
+        status: 'predict',
+        direction: predN0 >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(predN0.toFixed(2)),
+        wasNegative: false
+    };
+};
+
 const sendTelegramMessage = async (chatId, messageHtml) => {
     if (!chatId || !ENABLE_TELEGRAM) return;
 
@@ -598,12 +643,14 @@ const processAndSendPrediction = async (results, gameId) => {
     const p2 = predictFormula2(results);
     const p3 = predictFormula3(results);
     const p4 = predictFormula4(results);
+    const p5 = predictFormula5(results);
 
     const nextPredictions = {
         'X1': p1,
         'X2': p2,
         'X3': p3,
-        'X4': p4
+        'X4': p4,
+        'X5': p5
     };
 
     MODEL_KEYS.forEach(k => {
@@ -622,7 +669,7 @@ const processAndSendPrediction = async (results, gameId) => {
     const pubMessage = `🫆 join site: https://bc.game/i-3l5cmbvs3-n\nID: #${gameId} ${timeStrWithIcon}\n ${last10Formatted}\nContact for VIP access & live predictions: @alias00x`;
     telegramPromises.push(sendTelegramMessage(TARGET_CHAT_PUB, pubMessage));
 
-    // 2. TELEGRAM_CHAT_VIPI (VIP I)
+    // 2. TELEGRAM_CHAT_VIPI (VIP I: Displays X1 & X2)
     const last5 = results.slice(-5);
     const last5Formatted = last5.map(num => formatColoredNum(num)).join('  ');
 
@@ -636,7 +683,7 @@ const processAndSendPrediction = async (results, gameId) => {
     vip1Message += `Next X2:  ${formatNextLine(p2, results)}`;
     telegramPromises.push(sendTelegramMessage(TELEGRAM_CHAT_VIPI, vip1Message));
 
-    // 3. TELEGRAM_VIP2_CHAT_ID (VIP II)
+    // 3. TELEGRAM_VIP2_CHAT_ID (VIP II: Displays X1, X2, X3, X5)
     let vip2Message = `👑👑 VIP II \n`;
     vip2Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last5Formatted}\n`;
@@ -644,9 +691,11 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += formatSystemBlockVip2("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X3", modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X5", modelsState['X5'].stats, modelsState['X5'].lastPts, modelsState['X5'].totalScore) + "\n";
     vip2Message += `X1:  ${formatNextLine(p1, results)}\n`;
     vip2Message += `X2:  ${formatNextLine(p2, results)}\n`;
-    vip2Message += `X3:  ${formatNextLine(p3, results)}`;
+    vip2Message += `X3:  ${formatNextLine(p3, results)}\n`;
+    vip2Message += `X5:  ${formatNextLine(p5, results)}`;
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
     // 4. TELEGRAM_CHAT_LOG (Periodic File Log every 50 games)
