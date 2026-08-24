@@ -520,6 +520,7 @@ const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
         }
 
         const payload = {
+            secretKey: WEBSITE_API_KEY,
             gameId: gameId,
             history8: last8,
             prediction: predVal,
@@ -530,17 +531,22 @@ const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
             last50Points: modelsState['X15'].stats.history20
         };
 
-        await axios.post(WEBSITE_API_URL, payload, {
+        const response = await axios.post(WEBSITE_API_URL, payload, {
             headers: {
-                'Authorization': WEBSITE_API_KEY,
-                'Content-Type': 'application/json'
+                'X-API-KEY': WEBSITE_API_KEY,
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0'
             },
-            timeout: 5000
+            timeout: 7000
         });
 
-        console.log(`[WEBSITE SYNC SUCCESS] Game #${gameId} synced to ${WEBSITE_API_URL}`);
+        console.log(`[WEBSITE SYNC OK] #${gameId} -> Code: ${response.status} | Pred: ${predVal}`);
     } catch (error) {
-        console.error(`[WEBSITE SYNC ERROR] ${error.message}`);
+        if (error.response) {
+            console.error(`[WEBSITE SYNC REJECTED] Server replied ${error.response.status}:`, error.response.data);
+        } else {
+            console.error(`[WEBSITE SYNC NETWORK ERROR] ${error.message}`);
+        }
     }
 };
 
