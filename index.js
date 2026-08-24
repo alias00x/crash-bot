@@ -5,6 +5,7 @@ puppeteer.use(StealthPlugin());
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TARGET_CHAT_PUB = "-1003912506906";
@@ -12,6 +13,9 @@ const TELEGRAM_CHAT_VIPI = "-1003909320436";
 const TELEGRAM_VIP2_CHAT_ID = "-1003912437402";
 const TELEGRAM_CHAT_LOG = "-1004340657482";
 const ENABLE_TELEGRAM = true;
+
+const WEBSITE_API_URL = "https://altincabinet.ir/api.php";
+const WEBSITE_API_KEY = "AltinVIP_Secure_2026_Key";
 
 const TARGET_URL = "https://bc.game/game/crash";
 const VIP2_LOG_FILE = path.join(__dirname, 'vip_log_report.txt');
@@ -491,6 +495,55 @@ const predictFormula15 = (p1, p5) => {
     }
 };
 
+const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
+    try {
+        const last8 = results.slice(-8);
+        const p15 = nextPredictions['X15'];
+
+        let predVal = "wait";
+        let c2 = 50;
+        let c10 = 0;
+
+        if (p15 && p15.status === 'predict') {
+            predVal = p15.predictedValue;
+            let baseConf = calculateConfidence(predVal, results) || 50;
+            const factor = Math.max(0.2, baseConf / 100);
+
+            if (predVal < 2.0) {
+                c2 = baseConf;
+            } else if (predVal >= 2.0 && predVal < 10.0) {
+                c2 = baseConf;
+            } else {
+                c10 = Math.min(92, Math.max(10, baseConf));
+                c2 = Math.min(98, Math.max(10, Math.round(c10 + (100 - c10) * 0.70 * factor)));
+            }
+        }
+
+        const payload = {
+            gameId: gameId,
+            history8: last8,
+            prediction: predVal,
+            conf2: c2,
+            conf10: c10,
+            status: p15 && p15.status === 'predict' ? 'ACTIVE' : 'WAITING',
+            totalPredictions: totalEvaluatedGamesCount,
+            last50Points: modelsState['X15'].stats.history20
+        };
+
+        await axios.post(WEBSITE_API_URL, payload, {
+            headers: {
+                'Authorization': WEBSITE_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            timeout: 5000
+        });
+
+        console.log(`[WEBSITE SYNC SUCCESS] Game #${gameId} synced to ${WEBSITE_API_URL}`);
+    } catch (error) {
+        console.error(`[WEBSITE SYNC ERROR] ${error.message}`);
+    }
+};
+
 const sendTelegramMessage = async (chatId, messageHtml) => {
     if (!chatId || !ENABLE_TELEGRAM) return;
 
@@ -736,15 +789,15 @@ const processAndSendPrediction = async (results, gameId) => {
 
     generateStructuredLogFile();
 
-    const telegramPromises = [];
+    const dispatchPromises = [];
 
-    // 1. TARGET_CHAT_PUB (Public Channel)
+    dispatchPromises.push(sendWebsiteLiveData(gameId, results, nextPredictions));
+
     const last10 = results.slice(-10);
     const last10Formatted = last10.map(num => formatColoredNum(num)).join(' ');
     const pubMessage = `🫆 join site: https://bc.game/i-3l5cmbvs3-n\nID: #${gameId} ${timeStrWithIcon}\n ${last10Formatted}\nContact for VIP access & live predictions: @alias00x`;
-    telegramPromises.push(sendTelegramMessage(TARGET_CHAT_PUB, pubMessage));
+    dispatchPromises.push(sendTelegramMessage(TARGET_CHAT_PUB, pubMessage));
 
-    // 2. TELEGRAM_CHAT_VIPI (VIP I: Displays X1 & X2)
     const last5 = results.slice(-5);
     const last5Formatted = last5.map(num => formatColoredNum(num)).join('  ');
 
@@ -756,9 +809,8 @@ const processAndSendPrediction = async (results, gameId) => {
     vip1Message += formatSystemBlockVip1("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n\n";
     vip1Message += `Next X1:  ${formatNextLine(p1, results)}\n`;
     vip1Message += `Next X2:  ${formatNextLine(p2, results)}`;
-    telegramPromises.push(sendTelegramMessage(TELEGRAM_CHAT_VIPI, vip1Message));
+    dispatchPromises.push(sendTelegramMessage(TELEGRAM_CHAT_VIPI, vip1Message));
 
-    // 3. TELEGRAM_VIP2_CHAT_ID (VIP II: Displays X1, X2, X3, X5, X15)
     let vip2Message = `👑👑 VIP II \n`;
     vip2Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last5Formatted}\n`;
@@ -773,11 +825,10 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += `X3:  ${formatNextLine(p3, results)}\n`;
     vip2Message += `X5:  ${formatNextLine(p5, results)}\n`;
     vip2Message += `X15: ${formatNextLine(p15, results)}`;
-    telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
+    dispatchPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // 4. TELEGRAM_CHAT_LOG (Periodic File Log every 50 games)
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
-        telegramPromises.push(sendTelegramDocument(
+        dispatchPromises.push(sendTelegramDocument(
             TELEGRAM_CHAT_LOG,
             VIP2_LOG_FILE,
             `📊 <b>Full Log Report</b>\n<b>Game ID:</b> #${gameId}\n<b>Total:</b> ${totalEvaluatedGamesCount}`
@@ -791,7 +842,7 @@ const processAndSendPrediction = async (results, gameId) => {
             : null;
     });
 
-    await Promise.all(telegramPromises);
+    await Promise.all(dispatchPromises);
 };
 
 const isStrictlySequential = (dataList) => {
