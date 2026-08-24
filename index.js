@@ -33,7 +33,7 @@ const createStats = () => ({
     history20: []
 });
 
-const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4', 'X5'];
+const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4', 'X5', 'X15'];
 
 const modelsState = {};
 MODEL_KEYS.forEach(key => {
@@ -382,6 +382,31 @@ const predictFormula5 = (arr) => {
     const n4 = arr[len - 4];
     const n2 = arr[len - 2];
 
+    const n7 = arr[len - 7];
+    const n5 = arr[len - 5];
+    const n3 = arr[len - 3];
+    const n1 = arr[len - 1];
+
+    const oddEnergy = ((n1 - 1.0) + (n3 - 1.0) + (n5 - 1.0) + (n7 - 1.0)) / 4;
+
+    const maxLowerLeague = Math.max(n8, n6, n4);
+    const isLeagueBreakout = (maxLowerLeague < 3.20) && (n2 >= 5.0 || n2 >= maxLowerLeague * 2.2);
+
+    if (isLeagueBreakout) {
+        let breakoutTarget;
+        if (oddEnergy >= 0.8) {
+            breakoutTarget = n2 * (1.0 + Math.min(2.0, oddEnergy * 0.6));
+        } else {
+            breakoutTarget = Math.max(4.50, n2 * 0.85);
+        }
+        return {
+            status: 'predict',
+            direction: 'up',
+            predictedValue: Number(breakoutTarget.toFixed(2)),
+            wasNegative: false
+        };
+    }
+
     const isParabolicBowl = (n8 > n6) && (n6 <= n4) && (n4 < n2) && (n2 >= n8 * 0.95);
     if (isParabolicBowl) {
         return { status: 'wait' };
@@ -401,7 +426,8 @@ const predictFormula5 = (arr) => {
         const contractionRatio = L42 / L64;
         targetL20 = L42 * contractionRatio;
     } else {
-        targetL20 = (L42 * L42) / L64;
+        const L86 = (n8 - 1.0) + (n6 - 1.0);
+        targetL20 = (L64 * L42) / Math.max(0.1, L86);
     }
 
     const dropFromN2 = n2 - 1.0;
@@ -416,6 +442,53 @@ const predictFormula5 = (arr) => {
         predictedValue: Number(predN0.toFixed(2)),
         wasNegative: false
     };
+};
+
+const predictFormula15 = (p1, p5) => {
+    if (!p1 || p1.status !== 'predict' || !p5 || p5.status !== 'predict') {
+        return { status: 'wait' };
+    }
+
+    const v1 = p1.predictedValue;
+    const v5 = p5.predictedValue;
+
+    const isV1Over2 = v1 >= 2.0;
+    const isV5Over2 = v5 >= 2.0;
+
+    if (isV1Over2 !== isV5Over2) {
+        return { status: 'wait' };
+    }
+
+    if (isV1Over2 && isV5Over2) {
+        const isV1Over10 = v1 >= 10.0;
+        const isV5Over10 = v5 >= 10.0;
+
+        if (isV1Over10 || isV5Over10) {
+            const finalVal = Math.max(v1, v5);
+            return {
+                status: 'predict',
+                direction: 'up',
+                predictedValue: Number(finalVal.toFixed(2)),
+                wasNegative: false
+            };
+        } else {
+            const avgVal = (v1 + v5) / 2;
+            return {
+                status: 'predict',
+                direction: 'up',
+                predictedValue: Number(avgVal.toFixed(2)),
+                wasNegative: false
+            };
+        }
+    } else {
+        const avgVal = Math.min(1.95, Math.max(1.01, (v1 + v5) / 2));
+        return {
+            status: 'predict',
+            direction: 'dn',
+            predictedValue: Number(avgVal.toFixed(2)),
+            wasNegative: p1.wasNegative || p5.wasNegative
+        };
+    }
 };
 
 const sendTelegramMessage = async (chatId, messageHtml) => {
@@ -644,13 +717,15 @@ const processAndSendPrediction = async (results, gameId) => {
     const p3 = predictFormula3(results);
     const p4 = predictFormula4(results);
     const p5 = predictFormula5(results);
+    const p15 = predictFormula15(p1, p5);
 
     const nextPredictions = {
         'X1': p1,
         'X2': p2,
         'X3': p3,
         'X4': p4,
-        'X5': p5
+        'X5': p5,
+        'X15': p15
     };
 
     MODEL_KEYS.forEach(k => {
@@ -683,7 +758,7 @@ const processAndSendPrediction = async (results, gameId) => {
     vip1Message += `Next X2:  ${formatNextLine(p2, results)}`;
     telegramPromises.push(sendTelegramMessage(TELEGRAM_CHAT_VIPI, vip1Message));
 
-    // 3. TELEGRAM_VIP2_CHAT_ID (VIP II: Displays X1, X2, X3, X5)
+    // 3. TELEGRAM_VIP2_CHAT_ID (VIP II: Displays X1, X2, X3, X5, X15)
     let vip2Message = `👑👑 VIP II \n`;
     vip2Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last5Formatted}\n`;
@@ -692,10 +767,12 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += formatSystemBlockVip2("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X3", modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X5", modelsState['X5'].stats, modelsState['X5'].lastPts, modelsState['X5'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X15", modelsState['X15'].stats, modelsState['X15'].lastPts, modelsState['X15'].totalScore) + "\n";
     vip2Message += `X1:  ${formatNextLine(p1, results)}\n`;
     vip2Message += `X2:  ${formatNextLine(p2, results)}\n`;
     vip2Message += `X3:  ${formatNextLine(p3, results)}\n`;
-    vip2Message += `X5:  ${formatNextLine(p5, results)}`;
+    vip2Message += `X5:  ${formatNextLine(p5, results)}\n`;
+    vip2Message += `X15: ${formatNextLine(p15, results)}`;
     telegramPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
     // 4. TELEGRAM_CHAT_LOG (Periodic File Log every 50 games)
