@@ -37,7 +37,7 @@ const createStats = () => ({
     history20: []
 });
 
-const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4', 'X5', 'X15'];
+const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4', 'X5', 'TARGET'];
 
 const modelsState = {};
 MODEL_KEYS.forEach(key => {
@@ -448,64 +448,61 @@ const predictFormula5 = (arr) => {
     };
 };
 
-const predictFormula15 = (p1, p5) => {
-    if (!p1 || p1.status !== 'predict' || !p5 || p5.status !== 'predict') {
-        return { status: 'wait' };
-    }
+const predictMajorityConsensus = (predictions) => {
+    const validPreds = predictions.filter(p => p && p.status === 'predict' && typeof p.predictedValue === 'number' && !isNaN(p.predictedValue));
+    
+    const redPreds = validPreds.filter(p => p.predictedValue < 2.0);
+    const greenPreds = validPreds.filter(p => p.predictedValue >= 2.0);
 
-    const v1 = p1.predictedValue;
-    const v5 = p5.predictedValue;
+    const redCount = redPreds.length;
+    const greenCount = greenPreds.length;
 
-    const isV1Over2 = v1 >= 2.0;
-    const isV5Over2 = v5 >= 2.0;
-
-    if (isV1Over2 !== isV5Over2) {
-        return { status: 'wait' };
-    }
-
-    if (isV1Over2 && isV5Over2) {
-        const isV1Over10 = v1 >= 10.0;
-        const isV5Over10 = v5 >= 10.0;
-
-        if (isV1Over10 || isV5Over10) {
-            const finalVal = Math.max(v1, v5);
-            return {
-                status: 'predict',
-                direction: 'up',
-                predictedValue: Number(finalVal.toFixed(2)),
-                wasNegative: false
-            };
-        } else {
-            const avgVal = (v1 + v5) / 2;
-            return {
-                status: 'predict',
-                direction: 'up',
-                predictedValue: Number(avgVal.toFixed(2)),
-                wasNegative: false
-            };
-        }
-    } else {
-        const avgVal = Math.min(1.95, Math.max(1.01, (v1 + v5) / 2));
+    if (redCount >= 3) {
+        const avgRed = redPreds.reduce((acc, p) => acc + p.predictedValue, 0) / redCount;
+        const finalVal = Math.min(1.95, Math.max(1.01, avgRed));
         return {
             status: 'predict',
             direction: 'dn',
-            predictedValue: Number(avgVal.toFixed(2)),
-            wasNegative: p1.wasNegative || p5.wasNegative
+            predictedValue: Number(finalVal.toFixed(2)),
+            wasNegative: redPreds.some(p => p.wasNegative)
         };
     }
+
+    if (greenCount >= 3) {
+        const over10Preds = greenPreds.filter(p => p.predictedValue >= 10.0);
+        if (over10Preds.length > 0) {
+            let maxOver10 = Math.max(...over10Preds.map(p => p.predictedValue));
+            if (maxOver10 > 100) maxOver10 = 100;
+            return {
+                status: 'predict',
+                direction: 'up',
+                predictedValue: Number(maxOver10.toFixed(2)),
+                wasNegative: false
+            };
+        } else {
+            let avgGreen = greenPreds.reduce((acc, p) => acc + p.predictedValue, 0) / greenCount;
+            if (avgGreen > 100) avgGreen = 100;
+            return {
+                status: 'predict',
+                direction: 'up',
+                predictedValue: Number(avgGreen.toFixed(2)),
+                wasNegative: false
+            };
+        }
+    }
+
+    return { status: 'wait' };
 };
 
-const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
+const sendWebsiteLiveData = async (gameId, results, targetPrediction) => {
     try {
         const last8 = results.slice(-8);
-        const p15 = nextPredictions['X15'];
-
         let predVal = "wait";
         let c2 = 50;
         let c10 = 0;
 
-        if (p15 && p15.status === 'predict') {
-            predVal = p15.predictedValue;
+        if (targetPrediction && targetPrediction.status === 'predict') {
+            predVal = targetPrediction.predictedValue;
             let baseConf = calculateConfidence(predVal, results) || 50;
             const factor = Math.max(0.2, baseConf / 100);
 
@@ -526,23 +523,27 @@ const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
             prediction: predVal,
             conf2: c2,
             conf10: c10,
-            status: p15 && p15.status === 'predict' ? 'ACTIVE' : 'WAITING',
+            status: targetPrediction && targetPrediction.status === 'predict' ? 'ACTIVE' : 'WAITING',
             totalPredictions: totalEvaluatedGamesCount,
-            last50Points: modelsState['X15'].stats.history20
+            last50Points: modelsState['TARGET'].stats.history20
         };
 
-        const res = await axios.post(WEBSITE_API_URL, payload, {
+        const response = await axios.post(WEBSITE_API_URL, payload, {
             headers: {
                 'X-API-KEY': WEBSITE_API_KEY,
                 'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                'User-Agent': 'Mozilla/5.0'
             },
-            timeout: 8000
+            timeout: 7000
         });
 
-        console.log(`[WEBSITE SYNC SUCCESS] Game #${gameId} -> Server response:`, res.data);
+        console.log(`[WEBSITE SYNC OK] #${gameId} -> Status: ${response.status} | Pred: ${predVal}`);
     } catch (error) {
-        console.error(`[WEBSITE SYNC ERROR] ${error.message}`);
+        if (error.response) {
+            console.error(`[WEBSITE SYNC REJECTED] Server: ${error.response.status}`, error.response.data);
+        } else {
+            console.error(`[WEBSITE SYNC NETWORK ERROR] ${error.message}`);
+        }
     }
 };
 
@@ -560,7 +561,7 @@ const sendTelegramMessage = async (chatId, messageHtml) => {
             })
         });
     } catch (error) {
-        console.error(`[TELEGRAM FETCH ERROR -> ${chatId}]`, error);
+        console.error(`[TELEGRAM FETCH ERROR -> ${chatId}]`, error.message);
     }
 };
 
@@ -583,7 +584,7 @@ const sendTelegramDocument = async (chatId, filePath, caption = "") => {
             body: formData
         });
     } catch (error) {
-        console.error(`[TELEGRAM SEND DOC ERROR -> ${chatId}]`, error);
+        console.error(`[TELEGRAM SEND DOC ERROR -> ${chatId}]`, error.message);
     }
 };
 
@@ -592,7 +593,7 @@ const generateStructuredLogFile = () => {
 
     gameHistoryRows.forEach(row => {
         const cGame = `#${row.gameId}`.padEnd(9, ' ');
-        let predStr = row.pred === "wait" ? "wait" : (typeof row.pred === 'number' && row.pred > 1000 ? "1000" : String(row.pred));
+        let predStr = row.pred === "wait" ? "wait" : (typeof row.pred === 'number' && row.pred >= 100 ? "+100" : String(row.pred));
         const cPred = predStr.padEnd(10, ' ');
         const cAct = (typeof row.actual === 'number' ? row.actual.toFixed(2) : String(row.actual)).padEnd(7, ' ');
         const cConf = (row.conf !== null && row.conf !== '-' ? `${row.conf}%` : '-').padEnd(4, ' ');
@@ -673,8 +674,8 @@ const formatNextLine = (prediction, arr) => {
         return "wait ⚪";
     }
     const rawVal = prediction.predictedValue;
-    const val = rawVal > 1000 ? 1000 : rawVal;
-    const displayVal = val >= 1000 ? "1000" : val.toFixed(2);
+    const val = rawVal > 100 ? 100 : rawVal;
+    const displayVal = val >= 100 ? "+100" : val.toFixed(2);
     let note = prediction.wasNegative ? " (Negative)" : "";
 
     let baseConf = calculateConfidence(val, arr) || 50;
@@ -772,7 +773,8 @@ const processAndSendPrediction = async (results, gameId) => {
     const p3 = predictFormula3(results);
     const p4 = predictFormula4(results);
     const p5 = predictFormula5(results);
-    const p15 = predictFormula15(p1, p5);
+    
+    const targetPrediction = predictMajorityConsensus([p1, p2, p3, p4, p5]);
 
     const nextPredictions = {
         'X1': p1,
@@ -780,7 +782,7 @@ const processAndSendPrediction = async (results, gameId) => {
         'X3': p3,
         'X4': p4,
         'X5': p5,
-        'X15': p15
+        'TARGET': targetPrediction
     };
 
     MODEL_KEYS.forEach(k => {
@@ -793,7 +795,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     const dispatchPromises = [];
 
-    dispatchPromises.push(sendWebsiteLiveData(gameId, results, nextPredictions));
+    dispatchPromises.push(sendWebsiteLiveData(gameId, results, targetPrediction));
 
     const last10 = results.slice(-10);
     const last10Formatted = last10.map(num => formatColoredNum(num)).join(' ');
@@ -820,13 +822,14 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += formatSystemBlockVip2("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X3", modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X5", modelsState['X5'].stats, modelsState['X5'].lastPts, modelsState['X5'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X15", modelsState['X15'].stats, modelsState['X15'].lastPts, modelsState['X15'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X4", modelsState['X4'].stats, modelsState['X4'].lastPts, modelsState['X4'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X5", modelsState['X5'].stats, modelsState['X5'].lastPts, modelsState['X5'].totalScore) + "\n\n";
     vip2Message += `X1:  ${formatNextLine(p1, results)}\n`;
     vip2Message += `X2:  ${formatNextLine(p2, results)}\n`;
     vip2Message += `X3:  ${formatNextLine(p3, results)}\n`;
-    vip2Message += `X5:  ${formatNextLine(p5, results)}\n`;
-    vip2Message += `X15: ${formatNextLine(p15, results)}`;
+    vip2Message += `X4:  ${formatNextLine(p4, results)}\n`;
+    vip2Message += `X5:  ${formatNextLine(p5, results)}\n\n`;
+    vip2Message += `🎯 TARGET: ${formatNextLine(targetPrediction, results)}`;
     dispatchPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
