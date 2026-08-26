@@ -37,7 +37,8 @@ const createStats = () => ({
     history20: []
 });
 
-const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4', 'X5', 'X15'];
+// مدل‌های تحت پوشش سیستم
+const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X15'];
 
 const modelsState = {};
 MODEL_KEYS.forEach(key => {
@@ -193,13 +194,16 @@ const countConditionMet = (predVal, last6) => {
     const countGte2 = last6.filter(v => v >= 2.0).length;
     const countLt2 = 6 - countGte2;
     if (predVal >= 2.0) {
-        return countGte2 >= 3;
+        return countGte2 >= 2;
     } else {
-        return countLt2 >= 3;
+        return countLt2 >= 2;
     }
 };
 
-const predictFormula1 = (arr) => {
+// ==========================================
+// FORMULA 1 (X1): Logarithmic Pivot Model
+// ==========================================
+function predictFormula1(arr) {
     if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
     const last6 = arr.slice(-6);
 
@@ -234,9 +238,12 @@ const predictFormula1 = (arr) => {
         predictedValue: Number(finalN0.toFixed(2)),
         wasNegative: rawN0 < 0
     };
-};
+}
 
-const predictFormula2 = (arr) => {
+// ==========================================
+// FORMULA 2 (X2): Dynamic Rate Growth Model
+// ==========================================
+function predictFormula2(arr) {
     if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
     const last6 = arr.slice(-6);
 
@@ -279,9 +286,12 @@ const predictFormula2 = (arr) => {
         predictedValue: Number(pred.toFixed(2)),
         wasNegative: false
     };
-};
+}
 
-const predictFormula3 = (arr) => {
+// ==========================================
+// FORMULA 3 (X3): Contrarian / Inverted Model
+// ==========================================
+function predictFormula3(arr) {
     if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
     const len = arr.length;
     const n1 = arr[len - 1];
@@ -303,19 +313,12 @@ const predictFormula3 = (arr) => {
     let x1FailedOnN2 = false;
 
     if (predN2 >= 2.0) {
-        if (n2 < 2.0) {
-            x1FailedOnN2 = true;
-        } else if (n2 < 0.5 * predN2) {
+        if (n2 < 2.0 || n2 < 0.5 * predN2) {
             x1FailedOnN2 = true;
         }
     } else {
-        if (n2 >= 2.0) {
+        if (n2 >= 2.0 || (Math.abs(n2 - predN2) / Math.max(0.1, predN2) > 0.5)) {
             x1FailedOnN2 = true;
-        } else {
-            const diffPct = Math.abs(n2 - predN2) / Math.max(0.1, predN2);
-            if (diffPct > 0.5) {
-                x1FailedOnN2 = true;
-            }
         }
     }
 
@@ -344,9 +347,12 @@ const predictFormula3 = (arr) => {
         predictedValue: Number(invertedPred.toFixed(2)),
         wasNegative: rawN0 < 0
     };
-};
+}
 
-const predictFormula4 = (arr) => {
+// ==========================================
+// FORMULA 4 (X4): Ratio Multiplier Model
+// ==========================================
+function predictFormula4(arr) {
     if (!Array.isArray(arr) || arr.length < 5) return { status: 'wait' };
     const len = arr.length;
     const n1 = arr[len - 1];
@@ -375,67 +381,65 @@ const predictFormula4 = (arr) => {
         predictedValue: Number(predN0.toFixed(2)),
         wasNegative: false
     };
-};
+}
 
-const predictFormula5 = (arr) => {
+// =========================================================================
+// FORMULA 5 (X5): قانون n4 (سد واسط صعودی + فنر فشرده بازگشتی نزولی Fr)
+// =========================================================================
+function predictFormula5(arr) {
     if (!Array.isArray(arr) || arr.length < 8) return { status: 'wait' };
     const len = arr.length;
 
+    // استخراج زیر‌آرایه زوج متوالی
     const n8 = arr[len - 8];
     const n6 = arr[len - 6];
     const n4 = arr[len - 4];
     const n2 = arr[len - 2];
 
-    const n7 = arr[len - 7];
-    const n5 = arr[len - 5];
-    const n3 = arr[len - 3];
-    const n1 = arr[len - 1];
+    let predN0 = 1.5;
 
-    const oddEnergy = ((n1 - 1.0) + (n3 - 1.0) + (n5 - 1.0) + (n7 - 1.0)) / 4;
+    // ۱. شرایط نزولی (گام رو به پایین): فنر فشرده و پتانسیل جهش
+    if (n6 > n4) {
+        const floorDist = Math.max(0.05, n4 - 1.00); // فشردگی به کف ۱.۰۰
+        const energyIn = Math.max(0.1, n6 - 1.00);
+        const Kr = energyIn / floorDist; // ضریب بازتاب فنر
 
-    const maxLowerLeague = Math.max(n8, n6, n4);
-    const isLeagueBreakout = (maxLowerLeague < 3.20) && (n2 >= 5.0 || n2 >= maxLowerLeague * 2.2);
-
-    if (isLeagueBreakout) {
-        let breakoutTarget;
-        if (oddEnergy >= 0.8) {
-            breakoutTarget = n2 * (1.0 + Math.min(2.0, oddEnergy * 0.6));
+        if (n4 < 1.50) {
+            // فنر شدیداً فشرده شده (نزدیک ۱.۰) -> پتانسیل جهش بالا
+            if (Kr >= 20.0) {
+                predN0 = 1.00 + (n2 - 1.00) * (Kr / 3.0); // انفجار به سمت زرد / ۱۰+
+            } else if (Kr >= 4.0) {
+                predN0 = 1.00 + (n2 - 1.00) * (Kr / 4.0); // بازگشت به محدوده سبز
+            } else {
+                predN0 = 1.00 + (n2 - 1.00) * 1.15;
+            }
         } else {
-            breakoutTarget = Math.max(4.50, n2 * 0.85);
+            // n4 >= 1.50 -> فنر شل است و انرژی تخلیه نمی‌شود -> ماندن در محدوده قرمز
+            predN0 = Math.max(1.10, n2 * 0.85);
         }
-        return {
-            status: 'predict',
-            direction: 'up',
-            predictedValue: Number(breakoutTarget.toFixed(2)),
-            wasNegative: false
-        };
+    } 
+    // ۲. شرایط صعودی (گام رو به بالا): بررسی سد یا پل ارتباطی بودن n4
+    else {
+        const S1 = (n8 - 1.0) + (n6 - 1.0);
+        const S2 = (n6 - 1.0) + (n4 - 1.0);
+        const S3 = (n4 - 1.0) + (n2 - 1.0);
+
+        const deltaS = S3 - S2;
+        let targetS4 = S3 + deltaS;
+
+        if (n4 >= 1.50) {
+            // n4 بالای ۱.۵ است -> به عنوان پل عمل کرده و صعود سبز را تثبیت می‌کند
+            const dropN2 = n2 - 1.0;
+            predN0 = 1.0 + Math.max(1.10, targetS4 - dropN2);
+        } else {
+            // n4 زیر ۱.۵ است -> سد اتلاف انرژی؛ شتاب گرفته شده و عدد قرمز می‌ماند
+            const dampenedS4 = targetS4 * 0.60;
+            predN0 = 1.0 + (dampenedS4 * 0.5);
+            if (predN0 >= 2.0 && n2 < 2.0) {
+                predN0 = 1.85; // مهار زیر مرز ۲.۰
+            }
+        }
     }
-
-    const isParabolicBowl = (n8 > n6) && (n6 <= n4) && (n4 < n2) && (n2 >= n8 * 0.95);
-    if (isParabolicBowl) {
-        return { status: 'wait' };
-    }
-
-    const L64 = (n6 - 1.0) + (n4 - 1.0);
-    const L42 = (n4 - 1.0) + (n2 - 1.0);
-
-    if (L64 <= 0 || L42 <= 0) return { status: 'wait' };
-
-    let targetL20;
-
-    if (n6 < n4 && n4 < n2) {
-        const expansionRatio = L42 / L64;
-        targetL20 = L42 * expansionRatio;
-    } else if (n6 > n4 && n4 > n2) {
-        const contractionRatio = L42 / L64;
-        targetL20 = L42 * contractionRatio;
-    } else {
-        const L86 = (n8 - 1.0) + (n6 - 1.0);
-        targetL20 = (L64 * L42) / Math.max(0.1, L86);
-    }
-
-    const dropFromN2 = n2 - 1.0;
-    let predN0 = 1.0 + (targetL20 - dropFromN2);
 
     if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
     if (predN0 < 1.01) predN0 = 1.01;
@@ -446,9 +450,80 @@ const predictFormula5 = (arr) => {
         predictedValue: Number(predN0.toFixed(2)),
         wasNegative: false
     };
-};
+}
 
-const predictFormula15 = (p1, p5) => {
+// =========================================================================
+// FORMULA 6 (X6): فرمول Fn (اکستراپولیشن شیب خطی روی آرایه زوج)
+// =========================================================================
+function predictFormula6(arr) {
+    if (!Array.isArray(arr) || arr.length < 8) return { status: 'wait' };
+    const last6 = arr.slice(-6);
+
+    if (isAlternating(last6)) {
+        return { status: 'wait' };
+    }
+
+    const len = arr.length;
+    const n8 = arr[len - 8];
+    const n6 = arr[len - 6];
+    const n4 = arr[len - 4];
+    const n2 = arr[len - 2];
+
+    // میانگین شیب خطی در ۳ گام آرایه زوج
+    const deltaAvg = (n2 - n8) / 3.0;
+    let predN0 = n2 + deltaAvg;
+
+    if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
+    if (predN0 < 1.01) predN0 = 1.01;
+
+    return {
+        status: 'predict',
+        direction: predN0 >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(predN0.toFixed(2)),
+        wasNegative: false
+    };
+}
+
+// =========================================================================
+// FORMULA 7 (X7): فرمول Fw (شیب وزندار با شتاب گام‌های اخیر روی آرایه زوج)
+// =========================================================================
+function predictFormula7(arr) {
+    if (!Array.isArray(arr) || arr.length < 8) return { status: 'wait' };
+    const last6 = arr.slice(-6);
+
+    if (isAlternating(last6)) {
+        return { status: 'wait' };
+    }
+
+    const len = arr.length;
+    const n8 = arr[len - 8];
+    const n6 = arr[len - 6];
+    const n4 = arr[len - 4];
+    const n2 = arr[len - 2];
+
+    const d1 = n6 - n8;
+    const d2 = n4 - n6;
+    const d3 = n2 - n4;
+
+    // اعمال وزن‌های افزایشی به گام‌های نزدیک‌تر
+    const weightedSlope = (0.166 * d1) + (0.333 * d2) + (0.501 * d3);
+    let predN0 = n2 + weightedSlope;
+
+    if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
+    if (predN0 < 1.01) predN0 = 1.01;
+
+    return {
+        status: 'predict',
+        direction: predN0 >= 2.0 ? 'up' : 'dn',
+        predictedValue: Number(predN0.toFixed(2)),
+        wasNegative: false
+    };
+}
+
+// =========================================================================
+// FORMULA 15 (X15): مقایسه و همگرایی هوشمند میان X1 و X5 (قانون n4)
+// =========================================================================
+function predictFormula15(p1, p5) {
     if (!p1 || p1.status !== 'predict' || !p5 || p5.status !== 'predict') {
         return { status: 'wait' };
     }
@@ -459,6 +534,7 @@ const predictFormula15 = (p1, p5) => {
     const isV1Over2 = v1 >= 2.0;
     const isV5Over2 = v5 >= 2.0;
 
+    // عدم همگرایی جهت رنگی -> توقف و انتظار
     if (isV1Over2 !== isV5Over2) {
         return { status: 'wait' };
     }
@@ -493,7 +569,7 @@ const predictFormula15 = (p1, p5) => {
             wasNegative: p1.wasNegative || p5.wasNegative
         };
     }
-};
+}
 
 const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
     try {
@@ -771,12 +847,15 @@ const processAndSendPrediction = async (results, gameId) => {
         gameHistoryRows = gameHistoryRows.slice(-5000);
     }
 
+    // محاسبه تمام مدل‌ها به صورت توابع مستقل
     const p1 = predictFormula1(results);
     const p2 = predictFormula2(results);
     const p3 = predictFormula3(results);
     const p4 = predictFormula4(results);
-    const p5 = predictFormula5(results);
-    const p15 = predictFormula15(p1, p5);
+    const p5 = predictFormula5(results); // قانون n4
+    const p6 = predictFormula6(results); // فرمول Fn خطی
+    const p7 = predictFormula7(results); // فرمول Fw وزن‌دار
+    const p15 = predictFormula15(p1, p5); // مقایسه X1 و X5
 
     const nextPredictions = {
         'X1': p1,
@@ -784,6 +863,8 @@ const processAndSendPrediction = async (results, gameId) => {
         'X3': p3,
         'X4': p4,
         'X5': p5,
+        'X6': p6,
+        'X7': p7,
         'X15': p15
     };
 
@@ -807,6 +888,7 @@ const processAndSendPrediction = async (results, gameId) => {
     const last5 = results.slice(-5);
     const last5Formatted = last5.map(num => formatColoredNum(num)).join('  ');
 
+    // گزارش VIP I
     let vip1Message = `👑 VIP I \n`;
     vip1Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip1Message += `${last5Formatted}\n`;
@@ -817,6 +899,7 @@ const processAndSendPrediction = async (results, gameId) => {
     vip1Message += `Next X2:  ${formatNextLine(p2, results)}`;
     dispatchPromises.push(sendTelegramMessage(TELEGRAM_CHAT_VIPI, vip1Message));
 
+    // گزارش کامل VIP II با تمامی مدل‌ها
     let vip2Message = `👑👑 VIP II \n`;
     vip2Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last5Formatted}\n`;
@@ -824,12 +907,18 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += formatSystemBlockVip2("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
     vip2Message += formatSystemBlockVip2("X3", modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X5", modelsState['X5'].stats, modelsState['X5'].lastPts, modelsState['X5'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X15", modelsState['X15'].stats, modelsState['X15'].lastPts, modelsState['X15'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X4", modelsState['X4'].stats, modelsState['X4'].lastPts, modelsState['X4'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X5 (قانون n4)", modelsState['X5'].stats, modelsState['X5'].lastPts, modelsState['X5'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X6 (Fn خطی)", modelsState['X6'].stats, modelsState['X6'].lastPts, modelsState['X6'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X7 (Fw وزندار)", modelsState['X7'].stats, modelsState['X7'].lastPts, modelsState['X7'].totalScore) + "\n";
+    vip2Message += formatSystemBlockVip2("X15 (همگرایی)", modelsState['X15'].stats, modelsState['X15'].lastPts, modelsState['X15'].totalScore) + "\n";
     vip2Message += `X1:  ${formatNextLine(p1, results)}\n`;
     vip2Message += `X2:  ${formatNextLine(p2, results)}\n`;
     vip2Message += `X3:  ${formatNextLine(p3, results)}\n`;
-    vip2Message += `X5:  ${formatNextLine(p5, results)}\n`;
+    vip2Message += `X4:  ${formatNextLine(p4, results)}\n`;
+    vip2Message += `X5 (قانون n4): ${formatNextLine(p5, results)}\n`;
+    vip2Message += `X6 (Fn خطی): ${formatNextLine(p6, results)}\n`;
+    vip2Message += `X7 (Fw وزندار): ${formatNextLine(p7, results)}\n`;
     vip2Message += `X15: ${formatNextLine(p15, results)}`;
     dispatchPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
