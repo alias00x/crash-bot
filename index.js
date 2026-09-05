@@ -326,6 +326,60 @@ function predictFormula3(arr) {
     return { status: 'wait' };
 }
 
+// Generate Dark-themed Chart URL for Telegram
+const generateChartUrl = (modelKey = 'X2') => {
+    const pts = modelsState[modelKey].stats.history200;
+    if (!pts || pts.length === 0) return null;
+
+    let cumulative = 0;
+    const cumulativeData = pts.map(p => {
+        cumulative += p;
+        return cumulative;
+    });
+
+    const labels = cumulativeData.map((_, idx) => idx + 1);
+
+    const chartConfig = {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: `${modelKey} Trend (${cumulativeData.length} Games)`,
+                data: cumulativeData,
+                borderColor: '#38bdf8',
+                backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                fill: true,
+                pointRadius: cumulativeData.length > 50 ? 0 : 2,
+                borderWidth: 2,
+                tension: 0.35
+            }]
+        },
+        options: {
+            title: {
+                display: true,
+                text: `Model ${modelKey} Performance Curve`,
+                fontColor: '#f8fafc',
+                fontSize: 16
+            },
+            legend: {
+                labels: { fontColor: '#cbd5e1' }
+            },
+            scales: {
+                xAxes: [{
+                    ticks: { fontColor: '#94a3b8', maxTicksLimit: 12 },
+                    gridLines: { color: '#334155' }
+                }],
+                yAxes: [{
+                    ticks: { fontColor: '#94a3b8' },
+                    gridLines: { color: '#334155' }
+                }]
+            }
+        }
+    };
+
+    return `https://quickchart.io/chart?bkg=%230f172a&c=${encodeURIComponent(JSON.stringify(chartConfig))}`;
+};
+
 // Website sync (temporarily disabled at dispatch)
 const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
     try {
@@ -403,6 +457,25 @@ const sendTelegramMessage = async (chatId, messageHtml) => {
     }
 };
 
+const sendTelegramPhoto = async (chatId, photoUrl, caption = "") => {
+    if (!chatId || !ENABLE_TELEGRAM || !photoUrl) return;
+
+    try {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: chatId,
+                photo: photoUrl,
+                caption: caption,
+                parse_mode: 'HTML'
+            })
+        });
+    } catch (error) {
+        console.error(`[TELEGRAM PHOTO ERROR -> ${chatId}]`, error);
+    }
+};
+
 const sendTelegramDocument = async (chatId, filePath, caption = "") => {
     if (!chatId || !ENABLE_TELEGRAM || !fs.existsSync(filePath)) return;
 
@@ -474,6 +547,17 @@ const checkTelegramCommands = async () => {
                         VIP2_LOG_FILE,
                         `📁 <b>Full Log Report</b>\n<b>Games:</b> ${totalEvaluatedGamesCount}\n<b>Time:</b> ${getFormattedDateTime(false)}`
                     );
+                }
+
+                if (text === '/chart' || text === '/graph') {
+                    const chartUrl = generateChartUrl('X2');
+                    if (chartUrl) {
+                        await sendTelegramPhoto(
+                            senderChatId,
+                            chartUrl,
+                            `📈 <b>X2 Performance Curve</b>\n<b>Games Tracked:</b> ${modelsState['X2'].stats.history200.length}\n<b>Time:</b> ${getFormattedDateTime(false)}`
+                        );
+                    }
                 }
             }
         }
@@ -639,13 +723,13 @@ const processAndSendPrediction = async (results, gameId) => {
     // Website sync temporarily paused
     // dispatchPromises.push(sendWebsiteLiveData(gameId, results, nextPredictions));
 
-    // Public Channel (last 10 multipliers)
+    // Public Channel (last 10 numbers)
     const last10 = results.slice(-10);
     const last10Formatted = last10.map(num => formatColoredNum(num)).join(' ');
     const pubMessage = `🫆 join site: https://bc.game/i-3l5cmbvs3-n\nID: #${gameId} ${timeStrWithIcon}\n ${last10Formatted}\nContact for VIP access & live predictions: @alias00x`;
     dispatchPromises.push(sendTelegramMessage(TARGET_CHAT_PUB, pubMessage));
 
-    // VIP Messages (last 5 multipliers)
+    // VIP Messages (last 5 numbers)
     const last5 = results.slice(-5);
     const last5Formatted = last5.map(num => formatColoredNum(num)).join('  ');
 
@@ -673,13 +757,22 @@ const processAndSendPrediction = async (results, gameId) => {
     vip2Message += `X3:  ${formatNextLine(p3, results)}`;
     dispatchPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    // Log Report (Sent every 200 games)
+    // Send Log Report Document and Performance Chart every 200 games
     if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 200 === 0) {
         dispatchPromises.push(sendTelegramDocument(
             TELEGRAM_CHAT_LOG,
             VIP2_LOG_FILE,
             `📊 <b>Full Log Report</b>\n<b>Game ID:</b> #${gameId}\n<b>Total:</b> ${totalEvaluatedGamesCount}`
         ));
+
+        const chartUrl = generateChartUrl('X2');
+        if (chartUrl) {
+            dispatchPromises.push(sendTelegramPhoto(
+                TELEGRAM_CHAT_LOG,
+                chartUrl,
+                `📈 <b>X2 Performance Curve (Last 200 Games)</b>\n<b>Game ID:</b> #${gameId}\n<b>Total Games:</b> ${totalEvaluatedGamesCount}`
+            ));
+        }
     }
 
     MODEL_KEYS.forEach(key => {
