@@ -33,10 +33,13 @@ const createStats = () => ({
     under2: { count: 0, negPoints: 0, posPoints: 0 },
     over2: { count: 0, negPoints: 0, posPoints: 0 },
     over10: { count: 0, negPoints: 0, zeroCount: 0, posPoints: 0 },
-    x3_under2: { count: 0, pts: 0 },
-    x3_2to10: { count: 0, zeroCount: 0 },
-    x3_10to100: { count: 0, pts: 0 },
-    x3_over100: { count: 0, pts: 0 },
+    x3_100: {
+        count: 0,
+        ptsUnder2: 0,
+        zeroCount: 0,
+        pts10to100: 0,
+        ptsOver100: 0
+    },
     totalNegPoints: 0,
     totalPosPoints: 0,
     totalPredictions: 0,
@@ -90,7 +93,7 @@ const safeExp = (val) => {
     return Math.sign(val) * Math.exp(Math.abs(val));
 };
 
-// Custom score calculator
+// Points calculation
 const calculatePoints = (pred, actual, key) => {
     if (pred === null || isNaN(pred) || actual === null || isNaN(actual)) return 0;
 
@@ -179,18 +182,15 @@ const updateStats = (stats, predVal, actualVal, pts, key) => {
     }
 
     if (key === 'X3' || predVal === 100) {
+        stats.x3_100.count++;
         if (actualVal < 2.0) {
-            stats.x3_under2.count++;
-            stats.x3_under2.pts += pts;
+            stats.x3_100.ptsUnder2 += pts;
         } else if (actualVal >= 2.0 && actualVal < 10.0) {
-            stats.x3_2to10.count++;
-            stats.x3_2to10.zeroCount++;
+            stats.x3_100.zeroCount++;
         } else if (actualVal >= 10.0 && actualVal < 100.0) {
-            stats.x3_10to100.count++;
-            stats.x3_10to100.pts += pts;
+            stats.x3_100.pts10to100 += pts;
         } else if (actualVal >= 100.0) {
-            stats.x3_over100.count++;
-            stats.x3_over100.pts += pts;
+            stats.x3_100.ptsOver100 += pts;
         }
     } else {
         if (predVal < 2.0) {
@@ -216,7 +216,7 @@ const updateStats = (stats, predVal, actualVal, pts, key) => {
 };
 
 // ==========================================
-// FORMULA 1 (X1): Pure Logarithmic Pivot Model (Unrestricted)
+// FORMULA 1 (X1): Pure Logarithmic Pivot Model
 // ==========================================
 function predictFormula1(arr) {
     if (!Array.isArray(arr) || arr.length < 3) return { status: 'wait' };
@@ -226,7 +226,6 @@ function predictFormula1(arr) {
     let n2 = arr[len - 2];
     const n3 = arr[len - 3];
 
-    // Prevent division by zero
     if (n2 <= 1.00) {
         n2 = 1.01;
     }
@@ -572,11 +571,13 @@ const formatVip2BlockX3 = (stats, lastPts, totalScore) => {
     const ptsSign = lastPts >= 0 ? `+${lastPts}` : `${lastPts}`;
     const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
 
+    const u2 = stats.x3_100.ptsUnder2;
+    const z = stats.x3_100.zeroCount;
+    const p10 = stats.x3_100.pts10to100 >= 0 ? `+${stats.x3_100.pts10to100}` : `${stats.x3_100.pts10to100}`;
+    const p100 = stats.x3_100.ptsOver100 >= 0 ? `+${stats.x3_100.ptsOver100}` : `${stats.x3_100.ptsOver100}`;
+
     let str = `🩵 X3: Total: ${stats.totalPredictions}: (${ptsSign}) ${totalSign}\n`;
-    str += `-2: ${stats.x3_under2.count} (${stats.x3_under2.pts} / zero(0) / +0)\n`;
-    str += `+2: ${stats.x3_2to10.count} (0 / zero(${stats.x3_2to10.zeroCount}) / +0)\n`;
-    str += `+10: ${stats.x3_10to100.count} (${stats.x3_10to100.pts} / zero(0) / +0)\n`;
-    str += `+100: ${stats.x3_over100.count} (${stats.x3_over100.pts} / 0 / zero(0) / +0)\n`;
+    str += `+100: ${stats.totalPredictions} (${u2} / zero(${z}) / ${p10} / ${p100})\n`;
 
     return str;
 };
@@ -615,7 +616,6 @@ const processAndSendPrediction = async (results, gameId) => {
         gameHistoryRows = gameHistoryRows.slice(-5000);
     }
 
-    // Execute active models
     const p1 = predictFormula1(results);
     const p2 = predictFormula2(results);
     const p3 = predictFormula3(results);
@@ -636,7 +636,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     const dispatchPromises = [];
 
-    // Website sync temporarily disabled
+    // Website sync temporarily paused
     // dispatchPromises.push(sendWebsiteLiveData(gameId, results, nextPredictions));
 
     // Public Channel (last 10 multipliers)
