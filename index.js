@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 
+// Target Telegram Channels
 const TELEGRAM_BOT_TOKEN = "8952382896:AAGeV0YYvFF4exWp3hax0JnqSxtECRP-IsI";
 const TARGET_CHAT_PUB = "-1003912506906";
 const TELEGRAM_CHAT_VIPI = "-1003909320436";
@@ -14,6 +15,7 @@ const TELEGRAM_VIP2_CHAT_ID = "-1003912437402";
 const TELEGRAM_CHAT_LOG = "-1004340657482";
 const ENABLE_TELEGRAM = true;
 
+// Website API Config
 const WEBSITE_API_URL = "https://altincabinet.ir/api.php";
 const WEBSITE_API_KEY = "AltinVIP_Secure_2026_Key";
 
@@ -31,14 +33,18 @@ const createStats = () => ({
     under2: { count: 0, negPoints: 0, posPoints: 0 },
     over2: { count: 0, negPoints: 0, posPoints: 0 },
     over10: { count: 0, negPoints: 0, zeroCount: 0, posPoints: 0 },
+    x3_under2: { count: 0, pts: 0 },
+    x3_2to10: { count: 0, zeroCount: 0 },
+    x3_10to100: { count: 0, pts: 0 },
+    x3_over100: { count: 0, pts: 0 },
     totalNegPoints: 0,
     totalPosPoints: 0,
     totalPredictions: 0,
-    history20: []
+    history200: []
 });
 
-// مدل‌های تحت پوشش سیستم
-const MODEL_KEYS = ['X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X15'];
+// Active models only
+const MODEL_KEYS = ['X1', 'X2', 'X3'];
 
 const modelsState = {};
 MODEL_KEYS.forEach(key => {
@@ -84,8 +90,17 @@ const safeExp = (val) => {
     return Math.sign(val) * Math.exp(Math.abs(val));
 };
 
-const calculatePoints = (pred, actual) => {
+// Points calculation with custom brackets for X3
+const calculatePoints = (pred, actual, key) => {
     if (pred === null || isNaN(pred) || actual === null || isNaN(actual)) return 0;
+
+    if (key === 'X3' || pred === 100) {
+        if (actual < 2.0) return -4;
+        if (actual >= 2.0 && actual < 10.0) return 0;
+        if (actual >= 10.0 && actual < 100.0) return 10;
+        if (actual >= 100.0) return 110;
+        return 0;
+    }
 
     if (pred < 2) {
         return actual < 2 ? 1 : -1;
@@ -108,7 +123,8 @@ const calculateConfidence = (predictedVal, arr) => {
     const [n7, n6, n5, n4, n3, n2, n1] = last7;
 
     const k3 = safeLog(n3);
-    const k2 = safeLog(n2);
+    const adjustedN2 = (n2 <= 1.00) ? 1.01 : n2;
+    const k2 = safeLog(adjustedN2);
     const k1 = safeLog(n1);
 
     if (Math.abs(k2) < 1e-9) return 50;
@@ -153,31 +169,47 @@ const calculateConfidence = (predictedVal, arr) => {
     return Math.min(98, Math.max(5, Math.round(pct)));
 };
 
-const updateStats = (stats, predVal, actualVal, pts) => {
+const updateStats = (stats, predVal, actualVal, pts, key) => {
     if (pts < 0) {
         stats.totalNegPoints += pts;
     } else if (pts > 0) {
         stats.totalPosPoints += pts;
     }
 
-    if (predVal < 2.0) {
-        stats.under2.count++;
-        if (pts > 0) stats.under2.posPoints += pts;
-        if (pts < 0) stats.under2.negPoints += pts;
-    } else if (predVal >= 2.0 && predVal < 10.0) {
-        stats.over2.count++;
-        if (pts > 0) stats.over2.posPoints += pts;
-        if (pts < 0) stats.over2.negPoints += pts;
-    } else if (predVal >= 10.0) {
-        stats.over10.count++;
-        if (pts === 0) stats.over10.zeroCount++;
-        if (pts > 0) stats.over10.posPoints += pts;
-        if (pts < 0) stats.over10.negPoints += pts;
+    if (key === 'X3' || predVal === 100) {
+        if (actualVal < 2.0) {
+            stats.x3_under2.count++;
+            stats.x3_under2.pts += pts;
+        } else if (actualVal >= 2.0 && actualVal < 10.0) {
+            stats.x3_2to10.count++;
+            stats.x3_2to10.zeroCount++;
+        } else if (actualVal >= 10.0 && actualVal < 100.0) {
+            stats.x3_10to100.count++;
+            stats.x3_10to100.pts += pts;
+        } else if (actualVal >= 100.0) {
+            stats.x3_over100.count++;
+            stats.x3_over100.pts += pts;
+        }
+    } else {
+        if (predVal < 2.0) {
+            stats.under2.count++;
+            if (pts > 0) stats.under2.posPoints += pts;
+            if (pts < 0) stats.under2.negPoints += pts;
+        } else if (predVal >= 2.0 && predVal < 10.0) {
+            stats.over2.count++;
+            if (pts > 0) stats.over2.posPoints += pts;
+            if (pts < 0) stats.over2.negPoints += pts;
+        } else if (predVal >= 10.0) {
+            stats.over10.count++;
+            if (pts === 0) stats.over10.zeroCount++;
+            if (pts > 0) stats.over10.posPoints += pts;
+            if (pts < 0) stats.over10.negPoints += pts;
+        }
     }
 
-    stats.history20.push(pts);
-    if (stats.history20.length > 20) {
-        stats.history20.shift();
+    stats.history200.push(pts);
+    if (stats.history200.length > 200) {
+        stats.history200.shift();
     }
 };
 
@@ -212,14 +244,16 @@ function predictFormula1(arr) {
     }
 
     const n1 = arr[arr.length - 1];
-    const n2 = arr[arr.length - 2];
+    let n2 = arr[arr.length - 2];
     const n3 = arr[arr.length - 3];
+
+    if (n2 <= 1.00) {
+        n2 = 1.01;
+    }
 
     const ln1 = safeLog(n1);
     const ln2 = safeLog(n2);
     const ln3 = safeLog(n3);
-
-    if (Math.abs(ln2) < 1e-9) return { status: 'wait' };
 
     const k0 = (ln3 * ln1) / ln2;
     const rawN0 = safeExp(k0);
@@ -241,347 +275,94 @@ function predictFormula1(arr) {
 }
 
 // ==========================================
-// FORMULA 2 (X2): Dynamic Rate Growth Model
+// FORMULA 2 (X2): Dual Condition Strict Pivot
 // ==========================================
 function predictFormula2(arr) {
-    if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
-    const last6 = arr.slice(-6);
+    if (!Array.isArray(arr) || arr.length < 3) return { status: 'wait' };
 
-    if (isAlternating(last6)) {
-        return { status: 'wait' };
-    }
-
-    const len = arr.length;
-    const n6 = arr[len - 6];
-    const n4 = arr[len - 4];
-    const n2 = arr[len - 2];
-
-    if (n6 <= 0 || n4 <= 0 || n2 <= 0) return { status: 'wait' };
-
-    let pred = n2;
-
-    if (n6 < n4 && n4 < n2) {
-        const g1 = (n4 - n6) / n6;
-        const g2 = (n2 - n4) / n4;
-        pred = n2 * (1 + (g1 + g2) / 2);
-    } else if (n6 > n4 && n4 > n2) {
-        const d1 = (n6 - n4) / n6;
-        const d2 = (n4 - n2) / n4;
-        pred = n2 * (1 - (d1 + d2) / 2);
-    } else {
-        const rate = (n4 - n6) / n6;
-        pred = n2 * (1 + rate);
-    }
-
-    if (isNaN(pred) || !isFinite(pred)) return { status: 'wait' };
-    if (pred < 1.0) pred = 1.01;
-
-    if (!countConditionMet(pred, last6)) {
-        return { status: 'wait' };
-    }
-
-    return {
-        status: 'predict',
-        direction: pred >= 2.0 ? 'up' : 'dn',
-        predictedValue: Number(pred.toFixed(2)),
-        wasNegative: false
-    };
-}
-
-// ==========================================
-// FORMULA 3 (X3): Contrarian / Inverted Model
-// ==========================================
-function predictFormula3(arr) {
-    if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
     const len = arr.length;
     const n1 = arr[len - 1];
-    const n2 = arr[len - 2];
+    let n2 = arr[len - 2];
     const n3 = arr[len - 3];
-    const n4 = arr[len - 4];
-    const n5 = arr[len - 5];
 
-    const ln5 = safeLog(n5);
-    const ln3 = safeLog(n3);
-    const ln4 = safeLog(n4);
-
-    if (Math.abs(ln4) < 1e-9) return { status: 'wait' };
-
-    const kPrev = (ln5 * ln3) / ln4;
-    let rawPrev = safeExp(kPrev);
-    let predN2 = rawPrev < 0 ? Math.abs(rawPrev) + 1.0 : rawPrev;
-
-    let x1FailedOnN2 = false;
-
-    if (predN2 >= 2.0) {
-        if (n2 < 2.0 || n2 < 0.5 * predN2) {
-            x1FailedOnN2 = true;
-        }
-    } else {
-        if (n2 >= 2.0 || (Math.abs(n2 - predN2) / Math.max(0.1, predN2) > 0.5)) {
-            x1FailedOnN2 = true;
-        }
-    }
-
-    if (!x1FailedOnN2) {
-        return { status: 'wait' };
+    if (n2 <= 1.00) {
+        n2 = 1.01;
     }
 
     const ln1 = safeLog(n1);
     const ln2 = safeLog(n2);
-    if (Math.abs(ln2) < 1e-9) return { status: 'wait' };
+    const ln3 = safeLog(n3);
 
     const k0 = (ln3 * ln1) / ln2;
-    let rawN0 = safeExp(k0);
-    let basePred = rawN0 < 0 ? Math.abs(rawN0) + 1.0 : rawN0;
+    const rawN0 = safeExp(k0);
+    let finalN0 = rawN0 < 0 ? Math.abs(rawN0) + 1.0 : rawN0;
 
-    let invertedPred;
-    if (basePred >= 2.0) {
-        invertedPred = Math.max(1.10, Math.min(1.95, 2.0 / Math.max(1.05, basePred / 2)));
-    } else {
-        invertedPred = Math.max(2.10, 2.0 + (2.0 - basePred) * 2.5);
-    }
+    if (isNaN(finalN0) || !isFinite(finalN0)) return { status: 'wait' };
+    if (finalN0 < 1.0) finalN0 = 1.01;
 
-    return {
-        status: 'predict',
-        direction: invertedPred >= 2.0 ? 'up' : 'dn',
-        predictedValue: Number(invertedPred.toFixed(2)),
-        wasNegative: rawN0 < 0
-    };
-}
-
-// ==========================================
-// FORMULA 4 (X4): Ratio Multiplier Model
-// ==========================================
-function predictFormula4(arr) {
-    if (!Array.isArray(arr) || arr.length < 5) return { status: 'wait' };
-    const len = arr.length;
-    const n1 = arr[len - 1];
-    const n2 = arr[len - 2];
-    const n3 = arr[len - 3];
-    const n4 = arr[len - 4];
-    const n5 = arr[len - 5];
-
-    if (n5 <= 0 || n4 <= 0 || n3 <= 0 || n2 <= 0 || n1 <= 0) return { status: 'wait' };
-
-    const rate53 = n3 / n5;
-    const rate42 = n2 / n4;
-    const rateMultiplier = rate42 / Math.max(0.001, rate53);
-
-    const rate31 = n1 / n3;
-    const targetRate = rate31 * rateMultiplier;
-
-    let predN0 = n2 * targetRate;
-
-    if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
-    if (predN0 < 1.0) predN0 = 1.01;
-
-    return {
-        status: 'predict',
-        direction: predN0 >= 2.0 ? 'up' : 'dn',
-        predictedValue: Number(predN0.toFixed(2)),
-        wasNegative: false
-    };
-}
-
-// =========================================================================
-// FORMULA 5 (X5): قانون n4 (سد واسط صعودی + فنر فشرده بازگشتی نزولی Fr)
-// =========================================================================
-function predictFormula5(arr) {
-    if (!Array.isArray(arr) || arr.length < 8) return { status: 'wait' };
-    const len = arr.length;
-
-    // استخراج زیر‌آرایه زوج متوالی
-    const n8 = arr[len - 8];
-    const n6 = arr[len - 6];
-    const n4 = arr[len - 4];
-    const n2 = arr[len - 2];
-
-    let predN0 = 1.5;
-
-    // ۱. شرایط نزولی (گام رو به پایین): فنر فشرده و پتانسیل جهش
-    if (n6 > n4) {
-        const floorDist = Math.max(0.05, n4 - 1.00); // فشردگی به کف ۱.۰۰
-        const energyIn = Math.max(0.1, n6 - 1.00);
-        const Kr = energyIn / floorDist; // ضریب بازتاب فنر
-
-        if (n4 < 1.50) {
-            // فنر شدیداً فشرده شده (نزدیک ۱.۰) -> پتانسیل جهش بالا
-            if (Kr >= 20.0) {
-                predN0 = 1.00 + (n2 - 1.00) * (Kr / 3.0); // انفجار به سمت زرد / ۱۰+
-            } else if (Kr >= 4.0) {
-                predN0 = 1.00 + (n2 - 1.00) * (Kr / 4.0); // بازگشت به محدوده سبز
-            } else {
-                predN0 = 1.00 + (n2 - 1.00) * 1.15;
-            }
-        } else {
-            // n4 >= 1.50 -> فنر شل است و انرژی تخلیه نمی‌شود -> ماندن در محدوده قرمز
-            predN0 = Math.max(1.10, n2 * 0.85);
-        }
-    } 
-    // ۲. شرایط صعودی (گام رو به بالا): بررسی سد یا پل ارتباطی بودن n4
-    else {
-        const S1 = (n8 - 1.0) + (n6 - 1.0);
-        const S2 = (n6 - 1.0) + (n4 - 1.0);
-        const S3 = (n4 - 1.0) + (n2 - 1.0);
-
-        const deltaS = S3 - S2;
-        let targetS4 = S3 + deltaS;
-
-        if (n4 >= 1.50) {
-            // n4 بالای ۱.۵ است -> به عنوان پل عمل کرده و صعود سبز را تثبیت می‌کند
-            const dropN2 = n2 - 1.0;
-            predN0 = 1.0 + Math.max(1.10, targetS4 - dropN2);
-        } else {
-            // n4 زیر ۱.۵ است -> سد اتلاف انرژی؛ شتاب گرفته شده و عدد قرمز می‌ماند
-            const dampenedS4 = targetS4 * 0.60;
-            predN0 = 1.0 + (dampenedS4 * 0.5);
-            if (predN0 >= 2.0 && n2 < 2.0) {
-                predN0 = 1.85; // مهار زیر مرز ۲.۰
-            }
-        }
-    }
-
-    if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
-    if (predN0 < 1.01) predN0 = 1.01;
-
-    return {
-        status: 'predict',
-        direction: predN0 >= 2.0 ? 'up' : 'dn',
-        predictedValue: Number(predN0.toFixed(2)),
-        wasNegative: false
-    };
-}
-
-// =========================================================================
-// FORMULA 6 (X6): فرمول Fn (اکستراپولیشن شیب خطی روی آرایه زوج)
-// =========================================================================
-function predictFormula6(arr) {
-    if (!Array.isArray(arr) || arr.length < 8) return { status: 'wait' };
-    const last6 = arr.slice(-6);
-
-    if (isAlternating(last6)) {
-        return { status: 'wait' };
-    }
-
-    const len = arr.length;
-    const n8 = arr[len - 8];
-    const n6 = arr[len - 6];
-    const n4 = arr[len - 4];
-    const n2 = arr[len - 2];
-
-    // میانگین شیب خطی در ۳ گام آرایه زوج
-    const deltaAvg = (n2 - n8) / 3.0;
-    let predN0 = n2 + deltaAvg;
-
-    if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
-    if (predN0 < 1.01) predN0 = 1.01;
-
-    return {
-        status: 'predict',
-        direction: predN0 >= 2.0 ? 'up' : 'dn',
-        predictedValue: Number(predN0.toFixed(2)),
-        wasNegative: false
-    };
-}
-
-// =========================================================================
-// FORMULA 7 (X7): فرمول Fw (شیب وزندار با شتاب گام‌های اخیر روی آرایه زوج)
-// =========================================================================
-function predictFormula7(arr) {
-    if (!Array.isArray(arr) || arr.length < 8) return { status: 'wait' };
-    const last6 = arr.slice(-6);
-
-    if (isAlternating(last6)) {
-        return { status: 'wait' };
-    }
-
-    const len = arr.length;
-    const n8 = arr[len - 8];
-    const n6 = arr[len - 6];
-    const n4 = arr[len - 4];
-    const n2 = arr[len - 2];
-
-    const d1 = n6 - n8;
-    const d2 = n4 - n6;
-    const d3 = n2 - n4;
-
-    // اعمال وزن‌های افزایشی به گام‌های نزدیک‌تر
-    const weightedSlope = (0.166 * d1) + (0.333 * d2) + (0.501 * d3);
-    let predN0 = n2 + weightedSlope;
-
-    if (isNaN(predN0) || !isFinite(predN0)) return { status: 'wait' };
-    if (predN0 < 1.01) predN0 = 1.01;
-
-    return {
-        status: 'predict',
-        direction: predN0 >= 2.0 ? 'up' : 'dn',
-        predictedValue: Number(predN0.toFixed(2)),
-        wasNegative: false
-    };
-}
-
-// =========================================================================
-// FORMULA 15 (X15): مقایسه و همگرایی هوشمند میان X1 و X5 (قانون n4)
-// =========================================================================
-function predictFormula15(p1, p5) {
-    if (!p1 || p1.status !== 'predict' || !p5 || p5.status !== 'predict') {
-        return { status: 'wait' };
-    }
-
-    const v1 = p1.predictedValue;
-    const v5 = p5.predictedValue;
-
-    const isV1Over2 = v1 >= 2.0;
-    const isV5Over2 = v5 >= 2.0;
-
-    // عدم همگرایی جهت رنگی -> توقف و انتظار
-    if (isV1Over2 !== isV5Over2) {
-        return { status: 'wait' };
-    }
-
-    if (isV1Over2 && isV5Over2) {
-        const isV1Over10 = v1 >= 10.0;
-        const isV5Over10 = v5 >= 10.0;
-
-        if (isV1Over10 || isV5Over10) {
-            const finalVal = Math.max(v1, v5);
-            return {
-                status: 'predict',
-                direction: 'up',
-                predictedValue: Number(finalVal.toFixed(2)),
-                wasNegative: false
-            };
-        } else {
-            const avgVal = (v1 + v5) / 2;
-            return {
-                status: 'predict',
-                direction: 'up',
-                predictedValue: Number(avgVal.toFixed(2)),
-                wasNegative: false
-            };
-        }
-    } else {
-        const avgVal = Math.min(1.95, Math.max(1.01, (v1 + v5) / 2));
+    // Part 1: Red prediction (< 2.0)
+    if (n1 < 2.0 && n3 < 2.0 && finalN0 < 2.0) {
         return {
             status: 'predict',
             direction: 'dn',
-            predictedValue: Number(avgVal.toFixed(2)),
-            wasNegative: p1.wasNegative || p5.wasNegative
+            predictedValue: Number(finalN0.toFixed(2)),
+            wasNegative: rawN0 < 0
         };
     }
+
+    // Part 2: Green prediction (>= 2.0)
+    if (n1 >= 2.0 && n3 >= 2.0 && finalN0 >= 2.0) {
+        let finalVal = finalN0;
+        if (finalVal >= 10.0) {
+            finalVal = 10.0;
+        }
+        return {
+            status: 'predict',
+            direction: 'up',
+            predictedValue: Number(finalVal.toFixed(2)),
+            wasNegative: false
+        };
+    }
+
+    return { status: 'wait' };
 }
 
+// ==========================================
+// FORMULA 3 (X3): Multiplier 100 Model
+// ==========================================
+function predictFormula3(arr) {
+    if (!Array.isArray(arr) || arr.length < 8) return { status: 'wait' };
+    const len = arr.length;
+
+    const n8 = arr[len - 8];
+    const n6 = arr[len - 6];
+    const n4 = arr[len - 4];
+    const n2 = arr[len - 2];
+
+    if (n8 > n4 && n6 > n2) {
+        return {
+            status: 'predict',
+            direction: 'up',
+            predictedValue: 100,
+            wasNegative: false
+        };
+    }
+
+    return { status: 'wait' };
+}
+
+// Website sync (temporarily disabled at dispatch)
 const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
     try {
         const last8 = results.slice(-8);
-        const p15 = nextPredictions['X15'];
+        const p2 = nextPredictions['X2'];
 
         let predVal = "wait";
         let c2 = 50;
         let c10 = 0;
 
-        if (p15 && p15.status === 'predict') {
-            predVal = p15.predictedValue;
+        if (p2 && p2.status === 'predict') {
+            predVal = p2.predictedValue;
             let baseConf = calculateConfidence(predVal, results) || 50;
             const factor = Math.max(0.2, baseConf / 100);
 
@@ -602,9 +383,12 @@ const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
             prediction: predVal,
             conf2: c2,
             conf10: c10,
-            status: p15 && p15.status === 'predict' ? 'ACTIVE' : 'WAITING',
+            status: p2 && p2.status === 'predict' ? 'ACTIVE' : 'WAITING',
             totalPredictions: totalEvaluatedGamesCount,
-            last50Points: modelsState['X15'].stats.history20
+            last200Points: modelsState['X2'].stats.history200,
+            x1: nextPredictions['X1'] && nextPredictions['X1'].status === 'predict' ? nextPredictions['X1'].predictedValue : "wait",
+            x2: nextPredictions['X2'] && nextPredictions['X2'].status === 'predict' ? nextPredictions['X2'].predictedValue : "wait",
+            x3: nextPredictions['X3'] && nextPredictions['X3'].status === 'predict' ? nextPredictions['X3'].predictedValue : "wait"
         };
 
         const response = await axios.post(WEBSITE_API_URL, payload, {
@@ -616,12 +400,12 @@ const sendWebsiteLiveData = async (gameId, results, nextPredictions) => {
             timeout: 7000
         });
 
-        console.log(`[WEBSITE SYNC OK] #${gameId} -> Code: ${response.status} | Pred: ${predVal}`);
+        console.log(`[WEBSITE SYNC OK] #${gameId} -> Code: ${response.status}`);
     } catch (error) {
         if (error.response) {
-            console.error(`[WEBSITE SYNC REJECTED] Server replied ${error.response.status}:`, error.response.data);
+            console.error(`[WEBSITE SYNC REJECTED] Server replied ${error.response.status}`);
         } else {
-            console.error(`[WEBSITE SYNC NETWORK ERROR] ${error.message}`);
+            console.error(`[WEBSITE SYNC ERROR] ${error.message}`);
         }
     }
 };
@@ -771,44 +555,52 @@ const formatNextLine = (prediction, arr) => {
     }
 };
 
-const formatSystemBlockVip1 = (sysName, stats, lastPts, totalScore) => {
+const formatVip1Line = (sysName, stats, lastPts, totalScore) => {
     const ptsSign = lastPts >= 0 ? `+${lastPts}` : `${lastPts}`;
     const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
-    const negTot = stats.totalNegPoints;
-    const posTot = stats.totalPosPoints >= 0 ? `+${stats.totalPosPoints}` : `${stats.totalPosPoints}`;
-    return `🩵 ${sysName}: Total: ${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}`;
+
+    const scoreUnder2 = stats.under2.posPoints + stats.under2.negPoints;
+    const scoreOver2 = (stats.over2.posPoints + stats.over2.negPoints) + (stats.over10.posPoints + stats.over10.negPoints);
+
+    return `🩵 ${sysName}: Total: ${stats.totalPredictions} (${scoreUnder2} / ${scoreOver2}): (${ptsSign}) ${totalSign}`;
 };
 
-const formatSystemBlockVip2 = (sysName, stats, lastPts, totalScore) => {
+const formatVip2BlockStandard = (sysName, stats, lastPts, totalScore) => {
     const ptsSign = lastPts >= 0 ? `+${lastPts}` : `${lastPts}`;
     const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
-    
-    const negTot = stats.totalNegPoints;
-    const posTot = stats.totalPosPoints >= 0 ? `+${stats.totalPosPoints}` : `${stats.totalPosPoints}`;
 
-    const u2Neg = stats.under2.negPoints;
-    const u2Pos = stats.under2.posPoints >= 0 ? `+${stats.under2.posPoints}` : `${stats.under2.posPoints}`;
-
-    const o2Neg = stats.over2.negPoints;
-    const o2Pos = stats.over2.posPoints >= 0 ? `+${stats.over2.posPoints}` : `${stats.over2.posPoints}`;
+    const scoreUnder2 = stats.under2.posPoints + stats.under2.negPoints;
+    const scoreOver2 = (stats.over2.posPoints + stats.over2.negPoints) + (stats.over10.posPoints + stats.over10.negPoints);
 
     const o10Neg = stats.over10.negPoints;
     const o10Zero = stats.over10.zeroCount;
     const o10Pos = stats.over10.posPoints >= 0 ? `+${stats.over10.posPoints}` : `${stats.over10.posPoints}`;
 
+    const last20 = stats.history200.slice(-20);
     let neg20 = 0;
     let pos20 = 0;
-    stats.history20.forEach(p => {
+    last20.forEach(p => {
         if (p < 0) neg20 += p;
         if (p > 0) pos20 += p;
     });
     const pos20Str = pos20 >= 0 ? `+${pos20}` : `${pos20}`;
 
-    let str = `🩵 ${sysName}: Total: ${stats.totalPredictions} (${negTot} / ${posTot}): (${ptsSign}) ${totalSign}\n`;
+    let str = `🩵 ${sysName}: Total: ${stats.totalPredictions} (${scoreUnder2} / ${scoreOver2}): (${ptsSign}) ${totalSign}\n`;
     str += `Last 20 (${neg20} / ${pos20Str})\n`;
-    str += `- 2: ${stats.under2.count} (${u2Neg} / ${u2Pos})\n`;
-    str += `+2: ${stats.over2.count} (${o2Neg} / ${o2Pos})\n`;
     str += `+10: ${stats.over10.count} (${o10Neg} / zero(${o10Zero}) / ${o10Pos})\n`;
+
+    return str;
+};
+
+const formatVip2BlockX3 = (stats, lastPts, totalScore) => {
+    const ptsSign = lastPts >= 0 ? `+${lastPts}` : `${lastPts}`;
+    const totalSign = totalScore >= 0 ? `+${totalScore}` : `${totalScore}`;
+
+    let str = `🩵 X3: Total: ${stats.totalPredictions}: (${ptsSign}) ${totalSign}\n`;
+    str += `-2: ${stats.x3_under2.count} (${stats.x3_under2.pts} / zero(0) / +0)\n`;
+    str += `+2: ${stats.x3_2to10.count} (0 / zero(${stats.x3_2to10.zeroCount}) / +0)\n`;
+    str += `+10: ${stats.x3_10to100.count} (${stats.x3_10to100.pts} / zero(0) / +0)\n`;
+    str += `+100: ${stats.x3_over100.count} (${stats.x3_over100.pts} / 0 / zero(0) / +0)\n`;
 
     return str;
 };
@@ -826,9 +618,9 @@ const processAndSendPrediction = async (results, gameId) => {
         let predVal = "wait";
         if (m.pendingPrediction !== null && m.pendingPrediction.status === 'predict') {
             predVal = m.pendingPrediction.predictedValue;
-            pts = calculatePoints(predVal, actualValue);
+            pts = calculatePoints(predVal, actualValue, key);
             m.totalScore += pts;
-            updateStats(m.stats, predVal, actualValue, pts);
+            updateStats(m.stats, predVal, actualValue, pts, key);
         }
         m.lastPts = pts;
 
@@ -847,25 +639,14 @@ const processAndSendPrediction = async (results, gameId) => {
         gameHistoryRows = gameHistoryRows.slice(-5000);
     }
 
-    // محاسبه تمام مدل‌ها به صورت توابع مستقل
     const p1 = predictFormula1(results);
     const p2 = predictFormula2(results);
     const p3 = predictFormula3(results);
-    const p4 = predictFormula4(results);
-    const p5 = predictFormula5(results); // قانون n4
-    const p6 = predictFormula6(results); // فرمول Fn خطی
-    const p7 = predictFormula7(results); // فرمول Fw وزن‌دار
-    const p15 = predictFormula15(p1, p5); // مقایسه X1 و X5
 
     const nextPredictions = {
         'X1': p1,
         'X2': p2,
-        'X3': p3,
-        'X4': p4,
-        'X5': p5,
-        'X6': p6,
-        'X7': p7,
-        'X15': p15
+        'X3': p3
     };
 
     MODEL_KEYS.forEach(k => {
@@ -878,51 +659,45 @@ const processAndSendPrediction = async (results, gameId) => {
 
     const dispatchPromises = [];
 
-    dispatchPromises.push(sendWebsiteLiveData(gameId, results, nextPredictions));
+    // Website sync temporarily paused
+    // dispatchPromises.push(sendWebsiteLiveData(gameId, results, nextPredictions));
 
+    // Public Channel (last 10 multipliers)
     const last10 = results.slice(-10);
     const last10Formatted = last10.map(num => formatColoredNum(num)).join(' ');
     const pubMessage = `🫆 join site: https://bc.game/i-3l5cmbvs3-n\nID: #${gameId} ${timeStrWithIcon}\n ${last10Formatted}\nContact for VIP access & live predictions: @alias00x`;
     dispatchPromises.push(sendTelegramMessage(TARGET_CHAT_PUB, pubMessage));
 
+    // VIP Messages (last 5 multipliers)
     const last5 = results.slice(-5);
     const last5Formatted = last5.map(num => formatColoredNum(num)).join('  ');
 
-    // گزارش VIP I
+    // VIP I Report
     let vip1Message = `👑 VIP I \n`;
     vip1Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip1Message += `${last5Formatted}\n`;
     vip1Message += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
-    vip1Message += formatSystemBlockVip1("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
-    vip1Message += formatSystemBlockVip1("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n\n";
+    vip1Message += formatVip1Line("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
+    vip1Message += formatVip1Line("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n\n";
     vip1Message += `Next X1:  ${formatNextLine(p1, results)}\n`;
     vip1Message += `Next X2:  ${formatNextLine(p2, results)}`;
     dispatchPromises.push(sendTelegramMessage(TELEGRAM_CHAT_VIPI, vip1Message));
 
-    // گزارش کامل VIP II با تمامی مدل‌ها
+    // VIP II Report
     let vip2Message = `👑👑 VIP II \n`;
     vip2Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last5Formatted}\n`;
     vip2Message += `Total prediction: ${totalEvaluatedGamesCount}\n\n`;
-    vip2Message += formatSystemBlockVip2("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X3", modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X4", modelsState['X4'].stats, modelsState['X4'].lastPts, modelsState['X4'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X5 (قانون n4)", modelsState['X5'].stats, modelsState['X5'].lastPts, modelsState['X5'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X6 (Fn خطی)", modelsState['X6'].stats, modelsState['X6'].lastPts, modelsState['X6'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X7 (Fw وزندار)", modelsState['X7'].stats, modelsState['X7'].lastPts, modelsState['X7'].totalScore) + "\n";
-    vip2Message += formatSystemBlockVip2("X15 (همگرایی)", modelsState['X15'].stats, modelsState['X15'].lastPts, modelsState['X15'].totalScore) + "\n";
+    vip2Message += formatVip2BlockStandard("X1", modelsState['X1'].stats, modelsState['X1'].lastPts, modelsState['X1'].totalScore) + "\n";
+    vip2Message += formatVip2BlockStandard("X2", modelsState['X2'].stats, modelsState['X2'].lastPts, modelsState['X2'].totalScore) + "\n";
+    vip2Message += formatVip2BlockX3(modelsState['X3'].stats, modelsState['X3'].lastPts, modelsState['X3'].totalScore) + "\n";
     vip2Message += `X1:  ${formatNextLine(p1, results)}\n`;
     vip2Message += `X2:  ${formatNextLine(p2, results)}\n`;
-    vip2Message += `X3:  ${formatNextLine(p3, results)}\n`;
-    vip2Message += `X4:  ${formatNextLine(p4, results)}\n`;
-    vip2Message += `X5 (قانون n4): ${formatNextLine(p5, results)}\n`;
-    vip2Message += `X6 (Fn خطی): ${formatNextLine(p6, results)}\n`;
-    vip2Message += `X7 (Fw وزندار): ${formatNextLine(p7, results)}\n`;
-    vip2Message += `X15: ${formatNextLine(p15, results)}`;
+    vip2Message += `X3:  ${formatNextLine(p3, results)}`;
     dispatchPromises.push(sendTelegramMessage(TELEGRAM_VIP2_CHAT_ID, vip2Message));
 
-    if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 50 === 0) {
+    // Log Report (Sent every 200 games)
+    if (totalEvaluatedGamesCount > 0 && totalEvaluatedGamesCount % 200 === 0) {
         dispatchPromises.push(sendTelegramDocument(
             TELEGRAM_CHAT_LOG,
             VIP2_LOG_FILE,
