@@ -90,10 +90,11 @@ const safeExp = (val) => {
     return Math.sign(val) * Math.exp(Math.abs(val));
 };
 
-// Points calculation with custom brackets for X3
+// Custom score calculator
 const calculatePoints = (pred, actual, key) => {
     if (pred === null || isNaN(pred) || actual === null || isNaN(actual)) return 0;
 
+    // Custom scoring rules for X3
     if (key === 'X3' || pred === 100) {
         if (actual < 2.0) return -4;
         if (actual >= 2.0 && actual < 10.0) return 0;
@@ -102,6 +103,7 @@ const calculatePoints = (pred, actual, key) => {
         return 0;
     }
 
+    // Standard scoring for X1 and X2
     if (pred < 2) {
         return actual < 2 ? 1 : -1;
     } else if (pred >= 2 && pred < 10) {
@@ -213,40 +215,18 @@ const updateStats = (stats, predVal, actualVal, pts, key) => {
     }
 };
 
-const isAlternating = (last6) => {
-    if (last6.length < 6) return false;
-    const b = last6.map(v => v >= 2.0);
-    const p1 = [true, false, true, false, true, false];
-    const p2 = [false, true, false, true, false, true];
-    return b.every((val, idx) => val === p1[idx]) || b.every((val, idx) => val === p2[idx]);
-};
-
-const countConditionMet = (predVal, last6) => {
-    if (last6.length < 6) return false;
-    const countGte2 = last6.filter(v => v >= 2.0).length;
-    const countLt2 = 6 - countGte2;
-    if (predVal >= 2.0) {
-        return countGte2 >= 2;
-    } else {
-        return countLt2 >= 2;
-    }
-};
-
 // ==========================================
-// FORMULA 1 (X1): Logarithmic Pivot Model
+// FORMULA 1 (X1): Pure Logarithmic Pivot Model (Unrestricted)
 // ==========================================
 function predictFormula1(arr) {
-    if (!Array.isArray(arr) || arr.length < 6) return { status: 'wait' };
-    const last6 = arr.slice(-6);
+    if (!Array.isArray(arr) || arr.length < 3) return { status: 'wait' };
 
-    if (isAlternating(last6)) {
-        return { status: 'wait' };
-    }
+    const len = arr.length;
+    const n1 = arr[len - 1];
+    let n2 = arr[len - 2];
+    const n3 = arr[len - 3];
 
-    const n1 = arr[arr.length - 1];
-    let n2 = arr[arr.length - 2];
-    const n3 = arr[arr.length - 3];
-
+    // Prevent division by zero
     if (n2 <= 1.00) {
         n2 = 1.01;
     }
@@ -261,10 +241,6 @@ function predictFormula1(arr) {
 
     if (isNaN(finalN0) || !isFinite(finalN0)) return { status: 'wait' };
     if (finalN0 < 1.0) finalN0 = 1.01;
-
-    if (!countConditionMet(finalN0, last6)) {
-        return { status: 'wait' };
-    }
 
     return {
         status: 'predict',
@@ -639,6 +615,7 @@ const processAndSendPrediction = async (results, gameId) => {
         gameHistoryRows = gameHistoryRows.slice(-5000);
     }
 
+    // Execute active models
     const p1 = predictFormula1(results);
     const p2 = predictFormula2(results);
     const p3 = predictFormula3(results);
@@ -659,7 +636,7 @@ const processAndSendPrediction = async (results, gameId) => {
 
     const dispatchPromises = [];
 
-    // Website sync temporarily paused
+    // Website sync temporarily disabled
     // dispatchPromises.push(sendWebsiteLiveData(gameId, results, nextPredictions));
 
     // Public Channel (last 10 multipliers)
@@ -672,7 +649,7 @@ const processAndSendPrediction = async (results, gameId) => {
     const last5 = results.slice(-5);
     const last5Formatted = last5.map(num => formatColoredNum(num)).join('  ');
 
-    // VIP I Report
+    // VIP I Report (X1 and X2 only)
     let vip1Message = `👑 VIP I \n`;
     vip1Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip1Message += `${last5Formatted}\n`;
@@ -683,7 +660,7 @@ const processAndSendPrediction = async (results, gameId) => {
     vip1Message += `Next X2:  ${formatNextLine(p2, results)}`;
     dispatchPromises.push(sendTelegramMessage(TELEGRAM_CHAT_VIPI, vip1Message));
 
-    // VIP II Report
+    // VIP II Report (X1, X2 and X3)
     let vip2Message = `👑👑 VIP II \n`;
     vip2Message += `Game ID: #${gameId} | ${timeStrWithIcon}\n`;
     vip2Message += `${last5Formatted}\n`;
